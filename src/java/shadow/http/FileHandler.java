@@ -75,12 +75,12 @@ public class FileHandler implements HttpHandler {
     }
 
     @Override
-    public boolean handle(HttpContext ctx, HttpRequest request) throws IOException {
+    public void handle(HttpContext ctx, HttpRequest request) throws IOException {
 
         // FIXME: HEAD support
         // POST should never serve files right?
         if (!"GET".equals(request.method)) {
-            return false;
+            return;
         }
 
         // FIXME: should this all be case insensitive? probably not right?
@@ -89,7 +89,7 @@ public class FileHandler implements HttpHandler {
         String uri = request.target;
 
         if (!uri.startsWith("/")) {
-            return false;
+            return;
         }
 
         int queryIdx = uri.indexOf("?");
@@ -108,12 +108,12 @@ public class FileHandler implements HttpHandler {
         }
 
         if (fileInfo == null) {
-            return false;
+            return;
         }
 
         // sanity check, might have been deleted and watcher hasn't updated yet
         if (!servableFile(fileInfo.path)) {
-            return false;
+            return;
         }
 
         FileTime lastModifiedTime = Files.getLastModifiedTime(fileInfo.path);
@@ -155,8 +155,6 @@ public class FileHandler implements HttpHandler {
                 response.writeStream(in);
             }
         }
-
-        return true;
     }
 
     public void cleanup() {

@@ -12,15 +12,16 @@ public class HttpHandlerChain implements HttpHandler {
     }
 
     @Override
-    public boolean handle(HttpContext ctx, HttpRequest request) throws IOException {
+    public void handle(HttpContext ctx, HttpRequest request) throws IOException {
         Step step = firstStep;
         while (step != null) {
-            if (step.handler.handle(ctx, request)) {
-                return true;
+            step.handler.handle(ctx, request);
+
+            if (ctx.didRespond()) {
+                return;
             }
             step = step.next;
         }
-        return false;
     }
 
     @Override

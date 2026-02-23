@@ -29,8 +29,8 @@ public class Server {
         setHandler(HttpHandlerChain.fromList(chain));
     }
 
-    boolean handle(HttpContext ctx, HttpRequest request) throws IOException {
-        return rootHandler.handle(ctx, request);
+    void handle(HttpContext ctx, HttpRequest request) throws IOException {
+        rootHandler.handle(ctx, request);
     }
 
     public void start() throws IOException {
@@ -47,9 +47,7 @@ public class Server {
         HttpHandler test = (ctx, request) -> {
             if (request.target.equals("/")) {
                 ctx.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
-                return true;
             }
-            return false;
         };
 
         HttpHandler files = FileHandler.forPath("docs").findFiles().watch();

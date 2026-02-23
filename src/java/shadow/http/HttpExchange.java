@@ -77,12 +77,19 @@ public class HttpExchange implements Exchange, HttpContext {
     }
 
     @Override
+    public boolean didRespond() {
+        return request != null && response != null;
+    }
+
+    @Override
     public void process() throws IOException {
         try {
             for (; ; ) {
                 HttpRequest request = this.request = httpIn.readRequest();
 
-                if (!connection.getServer().handle(this, request)) {
+                connection.getServer().handle(this, request);
+
+                if (!didRespond()) {
                     respond().setStatus(404)
                             .setContentType("text/plain")
                             .writeString("Not found.");
