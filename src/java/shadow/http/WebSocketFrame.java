@@ -32,9 +32,48 @@ public class WebSocketFrame {
         this.payload = payload;
     }
 
+    public static WebSocketFrame text(byte[] payload) {
+        return new WebSocketFrame(true, false, false, false, OPCODE_TEXT, payload);
+    }
+
+    public static WebSocketFrame close(int statusCode) {
+        byte[] payload = new byte[2];
+        payload[0] = (byte) ((statusCode >> 8) & 0xFF);
+        payload[1] = (byte) (statusCode & 0xFF);
+        return new WebSocketFrame(true, false, false, false, OPCODE_CLOSE, payload);
+    }
+
     public boolean isControl() {
         // Section 5.5: opcodes 0x8-0xF are control frames
         return (opcode & 0x08) != 0;
+    }
+
+    public boolean isFin() {
+        return fin;
+    }
+
+    public boolean isText() {
+        return opcode == OPCODE_TEXT;
+    }
+
+    public boolean isBinary() {
+        return opcode == OPCODE_BINARY;
+    }
+
+    public boolean isPing() {
+        return opcode == OPCODE_PING;
+    }
+
+    public boolean isPong() {
+        return opcode == OPCODE_PONG;
+    }
+
+    public boolean isClose() {
+        return opcode == OPCODE_CLOSE;
+    }
+
+    public boolean isContinuation() {
+        return opcode == OPCODE_CONTINUATION;
     }
 
     /**
@@ -61,5 +100,9 @@ public class WebSocketFrame {
             return "";
         }
         return new String(payload, 2, payload.length - 2, StandardCharsets.UTF_8);
+    }
+
+    public byte[] getPayload() {
+        return payload;
     }
 }

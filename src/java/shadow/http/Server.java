@@ -47,6 +47,14 @@ public class Server {
         HttpHandler test = (ctx, request) -> {
             if (request.target.equals("/")) {
                 ctx.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
+            } else if (request.target.equals("/ws")) {
+                ctx.upgradeToWebSocket((ws, frame) -> {
+                    if (frame.isFin() && frame.isText()) {
+                        ws.sendFrame(WebSocketFrame.text(frame.getPayload()));
+                    } else {
+                        ws.close(1000);
+                    }
+                });
             }
         };
 

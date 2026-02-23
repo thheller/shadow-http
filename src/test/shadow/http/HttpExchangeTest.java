@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -28,12 +29,16 @@ public class HttpExchangeTest {
         return  out.toString(StandardCharsets.UTF_8);
     }
 
+    @Test
+    void testWebSocketAcceptKey() throws NoSuchAlgorithmException {
+        String result = HttpExchange.computeWebSocketAcceptKey("dGhlIHNhbXBsZSBub25jZQ==");
+        assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", result);
+    }
 
     @Test
     void simpleGetRequest() throws IOException {
         HttpHandler helloWorld = (context, request) -> {
             context.respond().writeString("Hello World!");
-            return true;
         };
 
         String result = run(helloWorld,
@@ -54,7 +59,6 @@ public class HttpExchangeTest {
     void simpleMultipleRequests() throws IOException {
         HttpHandler helloWorld = (context, request) -> {
             context.respond().writeString("Hello World!");
-            return true;
         };
 
         String request = "GET / HTTP/1.1\r\n" +
@@ -128,7 +132,7 @@ public class HttpExchangeTest {
 
     @Test
     void notFoundWhenUnhandled() throws IOException {
-        HttpHandler neverHandles = (context, request) -> false;
+        HttpHandler neverHandles = (context, request) -> {};
 
         String result = run(neverHandles,
                 "GET /missing HTTP/1.1\r\n" +
@@ -148,7 +152,6 @@ public class HttpExchangeTest {
     void customStatusCode() throws IOException {
         HttpHandler handler = (context, request) -> {
             context.respond().setStatus(201).writeString("Created");
-            return true;
         };
 
         String result = run(handler,
@@ -171,7 +174,6 @@ public class HttpExchangeTest {
             context.respond()
                     .setContentType("application/json")
                     .writeString("{\"ok\":true}");
-            return true;
         };
 
         String result = run(handler,
@@ -194,7 +196,6 @@ public class HttpExchangeTest {
             context.respond()
                     .setHeader("x-custom", "foobar")
                     .writeString("ok");
-            return true;
         };
 
         String result = run(handler,
@@ -217,7 +218,6 @@ public class HttpExchangeTest {
         HttpHandler handler = (context, request) -> {
             String ua = request.getHeaderValue("user-agent");
             context.respond().writeString("UA: " + ua);
-            return true;
         };
 
         String result = run(handler,
@@ -239,7 +239,6 @@ public class HttpExchangeTest {
     void requestPathAndMethodAccessible() throws IOException {
         HttpHandler handler = (context, request) -> {
             context.respond().writeString(request.method + " " + request.target);
-            return true;
         };
 
         String result = run(handler,
@@ -260,7 +259,6 @@ public class HttpExchangeTest {
     void emptyBodyResponse() throws IOException {
         HttpHandler handler = (context, request) -> {
             context.respond().setStatus(204).setContentLength(0).noContent();
-            return true;
         };
 
         String result = run(handler,
@@ -284,7 +282,6 @@ public class HttpExchangeTest {
             } catch (IllegalStateException e) {
                 assertEquals("already responded", e.getMessage());
             }
-            return true;
         };
 
         run(handler,
@@ -298,7 +295,6 @@ public class HttpExchangeTest {
     void emptyInputProducesNoOutput() throws IOException {
         HttpHandler handler = (context, request) -> {
             context.respond().writeString("should not happen");
-            return true;
         };
 
         String result = run(handler, "");
@@ -310,7 +306,6 @@ public class HttpExchangeTest {
     void requestWithQueryString() throws IOException {
         HttpHandler handler = (context, request) -> {
             context.respond().writeString("path=" + request.target);
-            return true;
         };
 
         String result = run(handler,
@@ -357,7 +352,6 @@ public class HttpExchangeTest {
             context.respond()
                     .setCloseAfter(true)
                     .writeString("bye");
-            return true;
         };
 
         // Send two requests but expect only one response due to connection: close

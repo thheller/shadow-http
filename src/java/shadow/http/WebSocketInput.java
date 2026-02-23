@@ -56,9 +56,9 @@ public class WebSocketInput {
      */
     public WebSocketFrame readFrame() throws IOException {
         // --- Byte 0: FIN, RSV1-3, opcode ---
-        int b0 = readByteOrEof();
+        int b0 = in.read();
         if (b0 == -1) {
-            return null; // clean stream end
+            return null;
         }
 
         boolean fin = (b0 & 0x80) != 0;
@@ -213,13 +213,6 @@ public class WebSocketInput {
             offset += read;
         }
         return buf;
-    }
-
-    /**
-     * Reads a single byte, returning -1 on EOF (for initial frame byte detection).
-     */
-    private int readByteOrEof() throws IOException {
-        return in.read();
     }
 
     /**

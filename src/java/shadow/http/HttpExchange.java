@@ -10,7 +10,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
 public class HttpExchange implements Exchange, HttpContext {
-    public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-5AB5C4653C0F";
+    public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+    public static String computeWebSocketAcceptKey(String wsKey) throws NoSuchAlgorithmException {
+        MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+        byte[] hash = sha1.digest((wsKey + WEBSOCKET_GUID).getBytes(StandardCharsets.US_ASCII));
+        return Base64.getEncoder().encodeToString(hash);
+    }
 
     final Connection connection;
     final InputStream in;
@@ -19,6 +25,8 @@ public class HttpExchange implements Exchange, HttpContext {
 
     HttpRequest request;
     HttpResponse response;
+
+    boolean upgraded = false;
 
     public HttpExchange(Connection connection) throws IOException {
         this.connection = connection;
@@ -51,23 +59,23 @@ public class HttpExchange implements Exchange, HttpContext {
 
         // Compute Sec-WebSocket-Accept per RFC 6455 Section 4.2.2
         // Concatenate key with magic GUID, SHA-1 hash, then base64 encode
-        String acceptKey;
         try {
-            MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-            byte[] hash = sha1.digest((wsKey + WEBSOCKET_GUID).getBytes(StandardCharsets.US_ASCII));
-            acceptKey = Base64.getEncoder().encodeToString(hash);
+            String acceptKey = computeWebSocketAcceptKey(wsKey);
+
+            // Send 101 Switching Protocols response per RFC 6455 Section 4.2.2
+            respond().setStatus(101)
+                    .setHeader("connection", "Upgrade")
+                    .setHeader("upgrade", "websocket")
+                    .setHeader("sec-websocket-accept", acceptKey)
+                    .noContent();
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-1 not available", e);
         }
 
-        // Send 101 Switching Protocols response per RFC 6455 Section 4.2.2
-        respond().setStatus(101)
-                .setHeader("connection", "Upgrade")
-                .setHeader("upgrade", "websocket")
-                .setHeader("sec-websocket-accept", acceptKey)
-                .noContent();
-    }
 
+        this.connection.upgrade(new WebSocketExchange(this.connection, handler));
+        this.upgraded = true;
+    }
     @Override
     public HttpResponse respond() throws IOException {
         if (this.response != null) {
@@ -108,7 +116,7 @@ public class HttpExchange implements Exchange, HttpContext {
                 this.request = null;
                 this.response = null;
 
-                if (res.closeAfter) {
+                if (upgraded || res.closeAfter) {
                     break;
                 }
             }
