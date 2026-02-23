@@ -1,0 +1,23 @@
+{:paths
+ ["src/dev"
+  "src/main"
+  "src/java"
+  "src/test"
+  "target/classes"]
+
+ :deps
+ {}
+
+ :aliases
+ {:dev
+  {:extra-deps
+   {thheller/shadow-cljs {:mvn/version "3.3.6"}
+    org.junit.jupiter/junit-jupiter-api {:mvn/version "5.9.2"}
+    org.junit.jupiter/junit-jupiter-engine {:mvn/version "5.9.2"}
+    com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}}
+
+   :jvm-opts ["-Djdk.attach.allowAttachSelf"]}
+
+  :start
+  {:main-opts ["-m" "repl"]
+   }}}

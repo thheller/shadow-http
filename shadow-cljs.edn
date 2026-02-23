@@ -1,0 +1,9 @@
+;; shadow-cljs configuration
+{:deps
+ {:aliases [:dev :local-dev]}
+
+ :dev-http
+ {5001 "public"}
+
+ :builds
+ {}}
