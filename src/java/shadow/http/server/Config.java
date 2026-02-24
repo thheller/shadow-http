@@ -13,6 +13,12 @@ public class Config {
         mimeTypes.put("html", "text/html");
         mimeTypes.put("htm", "text/html");
         mimeTypes.put("css", "text/css");
+
+        mimeTypes.put("clj", "text/plain");
+        mimeTypes.put("cljs", "text/plain");
+        mimeTypes.put("cljc", "text/plain");
+        mimeTypes.put("cljx", "text/plain");
+
         mimeTypes.put("js", "application/javascript");
         mimeTypes.put("mjs", "application/javascript");
         mimeTypes.put("json", "application/json");

@@ -4,7 +4,18 @@ This is a vibe coded HTTP Server with the goal of using it in shadow-cljs. It is
 
 ## Rationale
 
-I want a simpler HTTP server than undertow. shadow-cljs uses like 5% of its features. I looked at alternatives, but Jetty is equally bloated. http-kit would have worked, but is too ring specific for my tastes. Also, kinda hate its websocket implementation. I also didn't like much of the non-ring APIs.
+```
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.jboss.threads.JBossExecutors (file:/Users/thheller/.m2/repository/org/jboss/threads/jboss-threads/3.5.0.Final/jboss-threads-3.5.0.Final.jar)
+WARNING: Please consider reporting this to the maintainers of class org.jboss.threads.JBossExecutors
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/Users/thheller/.m2/repository/net/java/dev/jna/jna/5.16.0/jna-5.16.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+```
+
+I want this to be gone. I want a simpler HTTP server than undertow. shadow-cljs uses like 5% of its features. I looked at alternatives, but Jetty is equally bloated. http-kit would have worked, but is too ring specific for my tastes. Also, kinda hate its websocket implementation. I also didn't like much of the non-ring APIs.
 
 Pretty much every available Java HTTP Server is built using async IO. I wanted something simpler. So, this is using entirely boring old blocking java.io Streams and each connection gets its own virtual thread.
 
@@ -81,3 +92,4 @@ Need these before it becomes usable in shadow-cljs
 This [commit](https://github.com/thheller/shadow-http/commit/0bd0ebd86c56d5bac0cb71cda24388af33b85307#diff-068f638aa582231a2d6834ed3157ece037abe49ef117b5e04ffbfe0273139001) added `out.flush()` calls in ChunkedOutputStream. This halved the performance of the above `wrk` benchmark. Need to come up with a smarter flush strategy and probably better buffer sizes. It seems correct to use `.flush()` so that the client receives each chunk immediately, but it causes a lot of half filled TCP packets to be sent I presume. Not ideal when sending files, but essential for SSE.
 
 Temporary fix is response.setFlushEveryChunk(false), not the cleanest solution, but fixes the perf problem.
+

@@ -38,9 +38,11 @@ public class TestServer {
         };
 
         HttpHandler files = FileHandler.forPath("docs").findFiles().watch();
+        ClasspathHandler cp1 = ClasspathHandler.forPrefix("/shadow/cljs/ui/dist");
+        ClasspathHandler cp2 = ClasspathHandler.forPrefix("/");
 
         Server server = new Server();
-        server.setHandlers(files, test);
+        server.setHandlers(files, cp1, cp2, test);
         server.start(5007);
 
         System.out.println("Server started on http://localhost:5007");

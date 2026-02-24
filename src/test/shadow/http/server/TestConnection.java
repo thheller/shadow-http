@@ -4,6 +4,20 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 
 public class TestConnection implements Connection {
+
+    public static String run(HttpHandler handler, String rawRequest) throws IOException {
+        Server server = new Server();
+        server.setHandler(handler);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        TestConnection con = new TestConnection(server, rawRequest, out);
+
+        HttpExchange exchange = new HttpExchange(con);
+        exchange.process();
+
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
     final Server server;
     final InputStream in;
     final OutputStream out;

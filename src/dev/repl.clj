@@ -7,8 +7,6 @@
     [shadow.user]
     [shadow.cljs.devtools.server :as server]))
 
-(defonce css-watch-ref (atom nil))
-
 (defn start []
   (server/start!)
 
