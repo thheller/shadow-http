@@ -67,7 +67,8 @@ Started this as an experiment mostly. Wanted to give AI a shot and this seemed l
 
 Need these before it becomes usable in shadow-cljs
 
-- ClasspathHandler for serving files from classpath
+- ClasspathHandler for serving files from classpath (jars, files could be done via FileHandler)
+- RingHandler for `:http-handler` support. Adding that was a mistake, as people should be using their own ring servers when custom handlers are required. But maybe can get close enough with real basic support. ring-websockets was never supported anyway. Could possibly emulate though.
 
 ## TBD
 
