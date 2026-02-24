@@ -52,3 +52,29 @@ Transfer/sec:      3.99GB
 So, it is a decent start. For both most time is spent in syscalls, so probably not the best benchmark overall.
 
 Started this as an experiment mostly. Wanted to give AI a shot and this seemed like something it might be able to write. It isn't, but getting close sometimes. Also wanted to see how virtual threads hold up. I never actually expected to write this, but here we are.
+
+# Features
+
+## Working
+
+- FileHandler to serve static files from a directory. Supports on-the-fly gzip compression and If-Modified-Since/304 dance. Indexes all files on startup and supports starting a Watcher to watch for changes.
+- WebSockets including permessage-deflate compression
+- SSE can be done in user space, might change it to have "upgrade" semantics though as connection can never end after. Probably would make for a cleaner API.
+- GZIP on-the-fly compression also works for normal handlers
+- Transfer-Encoding: chunked is used if Content-Length is unknown
+
+## Pending
+
+Need these before it becomes usable in shadow-cljs
+
+- ClasspathHandler for serving files from classpath
+
+## TBD
+
+- ProxyHandler for :dev-http :proxy-url support. Undecided on this though, might just remove that feature completely and provide migration doc instead.
+- SSL. Unsure if useful. Rarely used and cert handling is annoying. Should probably just provide a doc with examples of how to do it with other servers. dev-time-ssl is still a nightmare generally due to certs.
+
+
+# Problems
+
+This [commit](https://github.com/thheller/shadow-http/commit/0bd0ebd86c56d5bac0cb71cda24388af33b85307#diff-068f638aa582231a2d6834ed3157ece037abe49ef117b5e04ffbfe0273139001) added `out.flush()` calls in ChunkedOutputStream. This halved the performance of the above `wrk` benchmark. Need to come up with a smarter flush strategy and probably better buffer sizes. It seems correct to use `.flush()` so that the client receives each chunk immediately, but it causes a lot of half filled TCP packets to be sent I presume. Not ideal when sending files, but essential for SSE.
