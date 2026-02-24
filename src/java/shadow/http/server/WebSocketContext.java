@@ -22,5 +22,17 @@ public interface WebSocketContext {
 
      */
 
+    void sendPing(byte[] payload) throws IOException;
+
+    default void sendPing() throws IOException {
+        sendPing(new byte[0]);
+    }
+
+    void sendPong(byte[] payload) throws IOException;
+
+    default void sendPong() throws IOException {
+        sendPong(new byte[0]);
+    }
+
     void sendClose(int statusCode) throws IOException;
 }

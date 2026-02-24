@@ -72,7 +72,10 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
                         closeReason = frame.getCloseReason();
                         sendClose(code);
                     }
-                    // Ping/pong are protocol-level; no need to surface them to the handler
+                    } else if (frame.isPing()) {
+                        this.handler = handler.onPing(this, frame.payload);
+                    } else if (frame.isPong()) {
+                        this.handler = handler.onPong(this, frame.payload);
                 } else if (!frame.isContinuation() && frame.isFin()) {
                     // Simple unfragmented data frame
                     byte[] payload = frame.payload;
@@ -210,6 +213,26 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
         out.flush();
     }
 
+
+    @Override
+    public void sendPing(byte[] payload) throws IOException {
+        lock.lock();
+        try {
+            sendFrame(out, true, false, WebSocketFrame.OPCODE_PING, payload, 0, payload.length);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void sendPong(byte[] payload) throws IOException {
+        lock.lock();
+        try {
+            sendFrame(out, true, false, WebSocketFrame.OPCODE_PONG, payload, 0, payload.length);
+        } finally {
+            lock.unlock();
+        }
+    }
 
     @Override
     public void sendClose(int statusCode) throws IOException {

@@ -123,6 +123,14 @@
     (ring-protocols/on-message listener this (ByteBuffer/wrap payload))
     this)
 
+  (onPing [this _ payload]
+    (ring-protocols/on-ping listener this (ByteBuffer/wrap payload))
+    this)
+
+  (onPong [this _ payload]
+    (ring-protocols/on-pong listener this (ByteBuffer/wrap payload))
+    this)
+
   (onClose [this status-code reason]
     (ring-protocols/on-close listener this status-code reason))
 
@@ -137,9 +145,11 @@
     this)
 
   (-ping [this data]
-    (throw (ex-info "TBD" {})))
+    (.sendPing ctx (.array ^ByteBuffer data))
+    this)
   (-pong [this data]
-    (throw (ex-info "TBD" {})))
+    (.sendPong ctx (.array ^ByteBuffer data))
+    this)
 
   (-close [this code reason]
     (.sendClose ctx code reason)
