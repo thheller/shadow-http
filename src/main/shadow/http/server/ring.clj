@@ -109,24 +109,22 @@
 (deftype RingWebSocketHandler [^WebSocketContext ctx listener]
   WebSocketHandler
   (start [_ ws-ctx]
-    (let [next (RingWebSocketHandler. ws-ctx listener)]
-      (when-let [on-open (:on-open listener)]
-        (on-open next))
-      next))
+    (let [next (RingWebSocketHandler. ws-ctx listener)
+          next-listener (ring-protocols/on-open listener next)]
+      (if (satisfies? ring-protocols/Listener next-listener)
+        (RingWebSocketHandler. ws-ctx next-listener)
+        next)))
 
   (onText [this _ payload]
-    (when-let [on-message (:on-message listener)]
-      (on-message this payload))
+    (ring-protocols/on-message listener this payload)
     this)
 
   (onBinary [this _ payload]
-    (when-let [on-message (:on-message listener)]
-      (on-message this (ByteBuffer/wrap payload)))
+    (ring-protocols/on-message listener this (ByteBuffer/wrap payload))
     this)
 
   (onClose [this status-code reason]
-    (when-let [on-close (:on-close listener)]
-      (on-close this status-code reason)))
+    (ring-protocols/on-close listener this status-code reason))
 
   ring-protocols/Socket
   (-open? [this]

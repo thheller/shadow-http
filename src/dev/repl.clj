@@ -5,13 +5,13 @@
     [build]
     [clojure.main :as main]
     [shadow.user]
-    [shadow.cljs.devtools.server :as server]
-    [shadow.http.server.ring :as ring]
-    [ring.websocket :as ws])
+    [shadow.cljs.devtools.server :as shadow-server]
+    [shadow.http.server :as server]
+    [ring.websocket :as ring-ws])
   (:import [shadow.http.server FileHandler HttpHandler Server]))
 
 (defn start []
-  (server/start!)
+  (shadow-server/start!)
 
   ::started)
 
@@ -36,10 +36,10 @@
   (def files (-> (FileHandler/forPath "docs")
                  (.findFiles)))
 
-  (def ring (ring/handler
+  (def ring (server/ring-handler
               (fn [req]
                 (if (= "/ws" (:uri req))
-                  {::ws/listener
+                  {::ring-ws/listener
                    {:on-open
                     (fn [socket]
                       (prn [:on-open socket])
@@ -51,8 +51,8 @@
                       (ws/send socket message))
 
                     :on-close
-                    (fn [socket status]
-                      (prn [:on-close status]))}}
+                    (fn [socket status reason]
+                      (prn [:on-close status reason]))}}
                   {:status 200
                    :body "Hello World"}))))
 
