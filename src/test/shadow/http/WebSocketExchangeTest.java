@@ -377,5 +377,33 @@ public class WebSocketExchangeTest {
 
         assertEquals(1006, receivedCode[0]);
     }
+
+    @Test
+    void onCloseCalledWithProtocolErrorOnInvalidFrame() throws IOException {
+        int[] receivedCode = {-1};
+        String[] receivedReason = {null};
+
+        WebSocketHandler handler = new WebSocketHandler() {
+            @Override
+            public void onClose(int statusCode, String reason) {
+                receivedCode[0] = statusCode;
+                receivedReason[0] = reason;
+            }
+        };
+
+        // An unmasked frame is a protocol violation (RFC 6455 Section 5.1).
+        // Craft a raw unmasked text frame: FIN=1, opcode=TEXT, MASK=0, length=5, payload="hello"
+        // Clients MUST mask all frames; absence of the mask bit triggers WebSocketProtocolException(1002).
+        ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
+        clientFrames.write(0x81);        // FIN=1, opcode=TEXT (0x1)
+        clientFrames.write(0x05);        // MASK=0, payload length=5  ← protocol violation
+        clientFrames.write("hello".getBytes(StandardCharsets.UTF_8));
+
+        run(handler, clientFrames.toByteArray());
+
+        // The server must detect the protocol violation and close with 1002
+        assertEquals(1002, receivedCode[0]);
+        assertNotNull(receivedReason[0]);
+    }
 }
 
