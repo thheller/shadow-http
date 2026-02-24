@@ -6,8 +6,6 @@ public/css
 /checkouts
 /src/gen
 
-pom.xml
-pom.xml.asc
 *.iml
 *.jar
 *.log
