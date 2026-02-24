@@ -66,7 +66,7 @@ Started this as an experiment mostly. Wanted to give AI a shot and this seemed l
 
 # Features
 
-## Working
+## Working (sort of)
 
 - FileHandler to serve static files from a directory. Supports on-the-fly gzip compression and If-Modified-Since/304 dance. Indexes all files on startup and supports starting a Watcher to watch for changes.
 - ClasspathHandler for serving files from classpath (also support gzip)
@@ -74,12 +74,11 @@ Started this as an experiment mostly. Wanted to give AI a shot and this seemed l
 - SSE can be done in user space, might change it to have "upgrade" semantics though as connection can never end after. Probably would make for a cleaner API.
 - GZIP on-the-fly compression also works for normal handlers
 - Transfer-Encoding: chunked is used if Content-Length is unknown
+- RingHandler for ring support, including websockets
 
 ## Pending
 
-Need these before it becomes usable in shadow-cljs
-
-- RingHandler for `:http-handler` support. Adding that was a mistake, as people should be using their own ring servers when custom handlers are required. But maybe can get close enough with real basic support. ring-websockets was never supported anyway. Could possibly emulate though.
+- request bodies are not currently accessible. will expose basic InputStream that handles chunked input. maybe something to read multipart requests.
 
 ## TBD
 
