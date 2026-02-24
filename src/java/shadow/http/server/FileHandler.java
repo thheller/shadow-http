@@ -133,7 +133,7 @@ public class FileHandler implements HttpHandler {
             // FIXME: config option
             boolean compress = size >= 850 && server.config.isCompressible(mimeType);
 
-            HttpResponse response = ctx.respond().setStatus(200).setContentType(mimeType);
+            HttpResponse response = ctx.respond().setStatus(200).setContentType(mimeType).setFlushEveryChunk(false);
 
             if (compress) {
                 response.setCompress(true);

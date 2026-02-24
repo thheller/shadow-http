@@ -79,3 +79,5 @@ Need these before it becomes usable in shadow-cljs
 # Problems
 
 This [commit](https://github.com/thheller/shadow-http/commit/0bd0ebd86c56d5bac0cb71cda24388af33b85307#diff-068f638aa582231a2d6834ed3157ece037abe49ef117b5e04ffbfe0273139001) added `out.flush()` calls in ChunkedOutputStream. This halved the performance of the above `wrk` benchmark. Need to come up with a smarter flush strategy and probably better buffer sizes. It seems correct to use `.flush()` so that the client receives each chunk immediately, but it causes a lot of half filled TCP packets to be sent I presume. Not ideal when sending files, but essential for SSE.
+
+Temporary fix is response.setFlushEveryChunk(false), not the cleanest solution, but fixes the perf problem.
