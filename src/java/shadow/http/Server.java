@@ -8,30 +8,44 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
-    HttpHandler rootHandler;
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     final Config config = new Config();
 
-    public void setHandler(HttpHandler handler) {
-        HttpHandler prev = rootHandler;
+    private HttpHandler[] handlers = null;
 
-        rootHandler = handler;
-        rootHandler.addedToServer(this);
-        if (prev != null) {
-            prev.cleanup();
-        }
+    public void setHandler(HttpHandler handler) {
+        setHandlers(handler);
     }
 
     public void setHandlers(HttpHandler... handlers) {
-        setHandler(HttpHandlerChain.fromList(List.of(handlers)));
+        HttpHandler[] prev = this.handlers;
+
+        this.handlers = handlers;
+        for (HttpHandler handler : handlers) {
+            handler.addedToServer(this);
+        }
+
+        if (prev != null) {
+            for (HttpHandler httpHandler : prev) {
+                httpHandler.cleanup();
+            }
+        }
     }
 
-    public void setHandlers(List<HttpHandler> chain) {
-        setHandler(HttpHandlerChain.fromList(chain));
+    public void setHandlers(List<HttpHandler> handlers) {
+        setHandlers((HttpHandler[]) handlers.toArray());
     }
 
     void handle(HttpContext ctx, HttpRequest request) throws IOException {
-        rootHandler.handle(ctx, request);
+        HttpHandler[] current = handlers;
+
+        for (HttpHandler handler : current) {
+            handler.handle(ctx, request);
+
+            if (ctx.didRespond()) {
+                break;
+            }
+        }
     }
 
     public void start() throws IOException {
