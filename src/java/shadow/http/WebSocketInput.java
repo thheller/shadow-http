@@ -21,8 +21,19 @@ public class WebSocketInput {
 
     private final InputStream in;
 
+    /**
+     * When non-null, RSV1 on the first frame of a message is accepted as the
+     * "Per-Message Compressed" bit defined in RFC 7692 Section 6.
+     */
+    private final WebSocketCompression webSocketCompression;
+
     public WebSocketInput(InputStream in) {
+        this(in, null);
+    }
+
+    public WebSocketInput(InputStream in, WebSocketCompression webSocketCompression) {
         this.in = in;
+        this.webSocketCompression = webSocketCompression;
     }
 
     /**
@@ -69,8 +80,10 @@ public class WebSocketInput {
 
         // Section 5.2: RSV1-3 MUST be 0 unless an extension is negotiated
         // that defines meanings for non-zero values.
-        // Since we don't support extensions, fail on non-zero RSV bits.
-        if (rsv1 || rsv2 || rsv3) {
+        // RFC 7692 Section 6: RSV1 is the "Per-Message Compressed" bit when
+        // permessage-deflate is negotiated.  RSV2 and RSV3 remain reserved.
+        boolean rsv1Allowed = (webSocketCompression != null) && !isControlOpcode(opcode);
+        if ((rsv1 && !rsv1Allowed) || rsv2 || rsv3) {
             throw new WebSocketProtocolException(
                     1002, "Reserved bits set without negotiated extension: RSV1=" + rsv1 + " RSV2=" + rsv2 + " RSV3=" + rsv3);
         }
@@ -126,6 +139,13 @@ public class WebSocketInput {
         unmask(payload, maskingKey);
 
         return new WebSocketFrame(fin, rsv1, rsv2, rsv3, opcode, payload);
+    }
+
+    /**
+     * Returns true if the opcode represents a control frame (Section 5.5).
+     */
+    private static boolean isControlOpcode(int opcode) {
+        return (opcode & 0x08) != 0;
     }
 
     /**

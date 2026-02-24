@@ -7,9 +7,14 @@ public interface WebSocketHandler {
     default WebSocketHandler start(WebSocketContext ctx) {
         return this;
     }
-
-    default void stop() {
+    default WebSocketHandler onText(WebSocketContext ctx, String payload) throws IOException {
+        return this;
     }
 
-    void handleFrame(WebSocketContext ctx, WebSocketFrame frame) throws IOException;
+    default WebSocketHandler onBinary(WebSocketContext ctx, byte[] payload) throws IOException {
+        return this;
+    }
+
+    default void onClose(int statusCode, String reason) {
+    }
 }

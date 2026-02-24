@@ -25,6 +25,7 @@ public class Server {
     public void setHandlers(HttpHandler... handlers) {
         setHandler(HttpHandlerChain.fromList(List.of(handlers)));
     }
+
     public void setHandlers(List<HttpHandler> chain) {
         setHandler(HttpHandlerChain.fromList(chain));
     }
@@ -48,11 +49,11 @@ public class Server {
             if (request.target.equals("/")) {
                 ctx.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
             } else if (request.target.equals("/ws")) {
-                ctx.upgradeToWebSocket((ws, frame) -> {
-                    if (frame.isFin() && frame.isText()) {
-                        ws.sendFrame(WebSocketFrame.text(frame.getPayload()));
-                    } else {
-                        ws.close(1000);
+                ctx.upgradeToWebSocket(new WebSocketHandler() {
+                    @Override
+                    public WebSocketHandler onText(WebSocketContext ctx, String payload) throws IOException {
+                        ctx.sendText(payload);
+                        return this;
                     }
                 });
             }

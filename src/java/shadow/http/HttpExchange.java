@@ -62,18 +62,25 @@ public class HttpExchange implements Exchange, HttpContext {
         try {
             String acceptKey = computeWebSocketAcceptKey(wsKey);
 
-            // Send 101 Switching Protocols response per RFC 6455 Section 4.2.2
-            respond().setStatus(101)
+            // Attempt to negotiate permessage-deflate per RFC 7692 Section 5
+            String extensionsHeader = request.getHeaderValue("sec-websocket-extensions");
+            WebSocketCompression pmd = WebSocketCompression.negotiate(extensionsHeader);
+
+            HttpResponse upgradeResponse = respond().setStatus(101)
                     .setHeader("connection", "Upgrade")
                     .setHeader("upgrade", "websocket")
-                    .setHeader("sec-websocket-accept", acceptKey)
-                    .noContent();
+                    .setHeader("sec-websocket-accept", acceptKey);
+
+            if (pmd != null) {
+                upgradeResponse.setHeader("sec-websocket-extensions", pmd.buildResponseHeaderValue());
+            }
+
+            upgradeResponse.noContent();
+
+            this.connection.upgrade(new WebSocketExchange(this.connection, handler, pmd));
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-1 not available", e);
         }
-
-
-        this.connection.upgrade(new WebSocketExchange(this.connection, handler));
         this.upgraded = true;
     }
     @Override

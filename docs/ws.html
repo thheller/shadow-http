@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>websocket test</title>
+  </head>
+  <body>
+    <form id="send-form">
+      <input type="text" id="send-input" placeholder="Type a message..." ></input>
+      <button type="submit">Send</button>
+    </form>
+    <div id="messages"></div>
+    <script>
+      var input = document.getElementById("send-input");
+      document
+        .getElementById("send-form")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          ws.send(input.value);
+          input.value = "";
+        });
+
+      var loc = document.location;
+      var proto = loc.protocol === "https:" ? "wss:" : "ws:";
+      var ws = new WebSocket(proto + "//" + loc.host + "/ws");
+
+      ws.onopen = function () {
+        ws.send("Hello World");
+
+        var msg = "";
+        var padding = "abcdefghijklmnopqrstuvwxyz0123456789";
+        while (msg.length < 1000) {
+          msg += padding;
+        }
+        ws.send(msg);
+      };
+
+      ws.onmessage = function (event) {
+        var div = document.createElement("div");
+        div.textContent = event.data;
+        document.getElementById("messages").appendChild(div);
+      };
+
+      ws.onerror = function (event) {
+        console.error("WebSocket error", event);
+      };
+
+      ws.onclose = function (event) {
+        console.log("WebSocket closed", event.code, event.reason);
+      };
+    </script>
+  </body>
+</html>

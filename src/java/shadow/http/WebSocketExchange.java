@@ -1,12 +1,17 @@
 package shadow.http;
 
+import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class WebSocketExchange implements WebSocketContext, Exchange {
+    private static final int MAX_FRAME_SIZE = 1000000;
+    // minimum size of message before compression is used
+    private static final int COMPRESSION_MIN_SIZE = 256;
 
     private final Connection connection;
 
@@ -18,14 +23,22 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
     final OutputStream out;
     final WebSocketInput wsIn;
 
-    boolean wasClosed = false;
+    /**
+     * Optional permessage-deflate context. Null when compression is not negotiated.
+     */
+    final WebSocketCompression wsCompression;
 
-    public WebSocketExchange(Connection connection, WebSocketHandler handler) throws IOException {
+    boolean wasClosed = false;
+    int closeStatusCode = 1006; // 1006 = abnormal closure (no close frame received)
+    String closeReason = "";
+
+    public WebSocketExchange(Connection connection, WebSocketHandler handler, WebSocketCompression webSocketCompression) throws IOException {
         this.connection = connection;
         this.handler = handler;
         this.in = connection.getInputStream();
         this.out = connection.getOutputStream();
-        this.wsIn = new WebSocketInput(this.in);
+        this.wsIn = new WebSocketInput(this.in, webSocketCompression);
+        this.wsCompression = webSocketCompression;
     }
 
     @Override
@@ -33,26 +46,75 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
         try {
             this.handler = this.handler.start(this);
 
+            // State for assembling fragmented messages
+            boolean inFragmentedMessage = false;
+            boolean fragmentedCompressed = false;
+            int fragmentedOpcode = -1;
+            ByteArrayOutputStream fragmentBuffer = null;
+
             for (; ; ) {
-                WebSocketFrame frame = wsIn.readFrame();
+                WebSocketFrame frame = null;
+
+                try {
+                    frame = wsIn.readFrame();
+                } catch (WebSocketProtocolException e) {
+                    sendClose(e.getStatusCode());
+                }
 
                 if (frame == null) {
-                    handler.stop();
                     break;
-                } else {
+                }
 
+                if (frame.isControl()) {
+                    // RFC 6455 Section 5.5: control frames may appear in the middle of a fragmented message
                     if (frame.isClose()) {
-                        // Echo the close frame back as required by RFC 6455 Section 5.5.1
-                        close(frame.getCloseStatusCode() == 1005 ? 1000 : frame.getCloseStatusCode());
-                    } else {
-                        handler.handleFrame(this, frame);
+                        int code = frame.getCloseStatusCode() == 1005 ? 1000 : frame.getCloseStatusCode();
+                        closeReason = frame.getCloseReason();
+                        sendClose(code);
                     }
-
-                    if (wasClosed) {
+                    // Ping/pong are protocol-level; no need to surface them to the handler
+                } else if (!frame.isContinuation() && frame.isFin()) {
+                    // Simple unfragmented data frame
+                    byte[] payload = frame.payload;
+                    if (wsCompression != null && frame.rsv1) {
+                        // Per-message compressed – decompress the payload (RFC 7692 Section 6.2)
+                        payload = wsCompression.decompress(frame.payload);
+                    }
+                    dispatchMessage(frame.opcode, payload);
+                } else if (!frame.isContinuation() && !frame.isFin()) {
+                    // First fragment of a fragmented message
+                    inFragmentedMessage = true;
+                    fragmentedCompressed = wsCompression != null && frame.rsv1;
+                    fragmentedOpcode = frame.opcode;
+                    fragmentBuffer = new ByteArrayOutputStream();
+                    fragmentBuffer.write(frame.payload);
+                } else if (frame.isContinuation()) {
+                    if (!inFragmentedMessage || fragmentBuffer == null) {
+                        sendClose(1002);
+                        closeReason = "Unexpected CONTINUATION Frame";
                         break;
                     }
+                    fragmentBuffer.write(frame.payload);
+                    if (frame.isFin()) {
+                        // Last fragment – assemble and optionally decompress
+                        byte[] assembled = fragmentBuffer.toByteArray();
+                        if (fragmentedCompressed) {
+                            assembled = wsCompression.decompress(assembled);
+                        }
+                        int opcode = fragmentedOpcode;
+                        inFragmentedMessage = false;
+                        fragmentedCompressed = false;
+                        fragmentedOpcode = -1;
+                        fragmentBuffer = null;
+                        dispatchMessage(opcode, assembled);
+                    }
+                }
+
+                if (wasClosed) {
+                    break;
                 }
             }
+
         } catch (EOFException e) {
             // ignore
         } catch (IOException e) {
@@ -60,27 +122,68 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        handler.onClose(closeStatusCode, closeReason);
     }
 
-    public void sendFrame(WebSocketFrame frame) throws IOException {
-        // in case multiple threads try to send frames we need to lock
-        // can't use synchronized since that wasn't ideal pre-java24, and we must be 21+
+    private void dispatchMessage(int opcode, byte[] payload) throws IOException {
+        if (opcode == WebSocketFrame.OPCODE_TEXT) {
+            this.handler = handler.onText(this, new String(payload, StandardCharsets.UTF_8));
+        } else if (opcode == WebSocketFrame.OPCODE_BINARY) {
+            this.handler = handler.onBinary(this, payload);
+        }
+    }
+
+    @Override
+    public void sendText(String text) throws IOException {
         lock.lock();
         try {
-            sendFrameEx(frame);
+            // need to lock in case multiple threads try to send messages
+            sendTextInternal(text);
         } finally {
             lock.unlock();
         }
     }
 
-    public void sendFrameEx(WebSocketFrame frame) throws IOException {
-        byte[] payload = (frame.payload == null) ? new byte[0] : frame.payload;
+    private void sendTextInternal(String text) throws IOException {
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
 
-        int b0 = (frame.fin ? 0x80 : 0)
-                | (frame.rsv1 ? 0x40 : 0)
-                | (frame.rsv2 ? 0x20 : 0)
-                | (frame.rsv3 ? 0x10 : 0)
-                | (frame.opcode & 0x0F);
+        // Only compress when compression was negotiated AND the payload is large enough
+        // to benefit.  RFC 7692 Section 6.1 explicitly allows skipping compression for
+        // any individual message (RSV1=0); small messages typically expand under deflate.
+        boolean rsv1 = wsCompression != null && bytes.length >= COMPRESSION_MIN_SIZE;
+
+        if (rsv1) {
+            // Compress the whole message payload (RFC 7692 Section 7.2.1), then send as
+            // frame(s) with RSV1=1 on the first frame only (the "Per-Message Compressed" bit).
+            bytes = wsCompression.compress(bytes);
+        }
+
+        int length = bytes.length;
+
+        if (length <= MAX_FRAME_SIZE) {
+            sendFrame(out, true, rsv1, WebSocketFrame.OPCODE_TEXT, bytes, 0, length);
+            return;
+        }
+
+        // Send first frame with OPCODE_TEXT and fin=false
+        int offset = 0;
+        sendFrame(out, false, rsv1, WebSocketFrame.OPCODE_TEXT, bytes, offset, MAX_FRAME_SIZE);
+        offset += MAX_FRAME_SIZE;
+
+        // Send continuation frames (RSV1 MUST NOT be set on non-first fragments per RFC 7692 Section 6.1)
+        while (offset < length) {
+            int end = Math.min(offset + MAX_FRAME_SIZE, length);
+            boolean fin = (end == length);
+            sendFrame(out, fin, false, WebSocketFrame.OPCODE_CONTINUATION, bytes, offset, end - offset);
+            offset = end;
+        }
+    }
+
+    public static void sendFrame(OutputStream out, boolean fin, boolean rsv1, int opcode, byte[] payload, int offset, int length) throws IOException {
+        int b0 = (fin ? 0x80 : 0)
+                | (rsv1 ? 0x40 : 0)
+                | (opcode & 0x0F);
 
         out.write(b0);
 
@@ -98,13 +201,27 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
             }
         }
 
-        out.write(payload);
+        out.write(payload, offset, length);
         out.flush();
     }
 
+
     @Override
-    public void close(int statusCode) throws IOException {
-        sendFrame(WebSocketFrame.close(statusCode));
+    public void sendClose(int statusCode) throws IOException {
+        lock.lock();
+        try {
+            sendCloseInternal(statusCode);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    void sendCloseInternal(int statusCode) throws IOException {
+        byte[] payload = new byte[2];
+        payload[0] = (byte) ((statusCode >> 8) & 0xFF);
+        payload[1] = (byte) (statusCode & 0xFF);
+        sendFrame(out, true, false, WebSocketFrame.OPCODE_CLOSE, payload, 0, payload.length);
         wasClosed = true;
+        closeStatusCode = statusCode;
     }
 }
