@@ -30,6 +30,8 @@ public class HttpResponse {
     public long contentLength = -1;
     public String contentType = "text/html";
     public String contentCharset = null;
+    // FIXME: this needs to be way more flexible, so the user can provide brotli compression or so if desired
+    // hardcoded gzip is good enough for now
     public boolean compress = false;
     public boolean body = true;
     public boolean chunked = true;

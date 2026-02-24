@@ -35,7 +35,7 @@ class ChunkedOutputStream extends OutputStream {
 
     @Override
     public void flush() throws IOException {
-        // logic already handles flushing. do nothing if called manually.
+        out.flush();
     }
 
     @Override
@@ -53,5 +53,6 @@ class ChunkedOutputStream extends OutputStream {
         out.write(CRLF);
         out.write(buffer, off, len);
         out.write(CRLF);
+        out.flush();
     }
 }

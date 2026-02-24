@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+    <div id="messages"></div>
+    <script>
+      var loc = document.location;
+      var es = new EventSource(loc.protocol + "//" + loc.host + "/sse");
+
+      es.onopen = function () {
+        console.log("SSE connection opened");
+      };
+
+      es.onmessage = function (event) {
+        console.log("SSE event", event);
+        var div = document.createElement("div");
+        div.textContent = event.data;
+        document.getElementById("messages").appendChild(div);
+      };
+
+      es.onerror = function (event) {
+        console.error("SSE error", event);
+      };
+    </script>
+</body>
+</html>
