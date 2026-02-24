@@ -8,23 +8,15 @@ public class SocketConnection implements Connection, Runnable {
 
     final Server server;
     final Socket socket;
-    final InputStream socketIn;
-    final OutputStream socketOut;
+
+    InputStream socketIn;
+    OutputStream socketOut;
 
     Exchange exchange;
 
-    public SocketConnection(Server server, Socket socket) throws IOException {
+    public SocketConnection(Server server, Socket socket) {
         this.server = server;
         this.socket = socket;
-
-        // FIXME: buffer sizes should be configurable
-        this.socketIn = new BufferedInputStream(socket.getInputStream(), 8192);
-        this.socketOut = new BufferedOutputStream(socket.getOutputStream(), 65536);
-
-        // starts out as http, may upgrade into websocket, at which point we don't need http specifics
-        // anymore, since there is no downgrade. so keeping everything http related in HttpExchange
-        // allows that to be collected after things upgraded
-        this.exchange = new HttpExchange(this);
     }
 
     @Override
@@ -49,6 +41,15 @@ public class SocketConnection implements Connection, Runnable {
     @Override
     public void run() {
         try {
+            // FIXME: buffer sizes should be configurable
+            this.socketIn = new BufferedInputStream(socket.getInputStream(), 8192);
+            this.socketOut = new BufferedOutputStream(socket.getOutputStream(), 65536);
+
+            // starts out as http, may upgrade into websocket, at which point we don't need http specifics
+            // anymore, since there is no downgrade. so keeping everything http related in HttpExchange
+            // allows that to be collected after things upgraded
+            this.exchange = new HttpExchange(this);
+
             for (; ; ) {
                 if (exchange != null) {
                     Exchange active = exchange;

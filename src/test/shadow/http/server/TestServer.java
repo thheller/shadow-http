@@ -4,7 +4,7 @@ import java.io.IOException;
 
 public class TestServer {
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
 
         HttpHandler test = (ctx, request) -> {
             if (request.target.equals("/")) {
@@ -41,6 +41,8 @@ public class TestServer {
 
         Server server = new Server();
         server.setHandlers(files, test);
-        server.start();
+        server.start(5007);
+
+        System.out.println("Server started on http://localhost:5007");
     }
 }
