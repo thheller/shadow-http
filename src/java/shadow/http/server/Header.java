@@ -1,4 +1,4 @@
-package shadow.http;
+package shadow.http.server;
 
 public class Header {
     public String nameIn;

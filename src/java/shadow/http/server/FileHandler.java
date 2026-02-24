@@ -1,4 +1,4 @@
-package shadow.http;
+package shadow.http.server;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;

@@ -1,4 +1,4 @@
-package shadow.http;
+package shadow.http.server;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;

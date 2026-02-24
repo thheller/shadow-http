@@ -1,4 +1,4 @@
-package shadow.http;
+package shadow.http.server;
 
 import java.io.EOFException;
 import java.io.IOException;

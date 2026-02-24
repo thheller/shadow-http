@@ -1,4 +1,4 @@
-package shadow.http;
+package shadow.http.server;
 
 import org.junit.jupiter.api.Test;
 
