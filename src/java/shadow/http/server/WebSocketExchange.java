@@ -135,6 +135,11 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
     }
 
     @Override
+    public boolean isOpen() {
+        return !wasClosed && connection.isActive();
+    }
+
+    @Override
     public void sendText(String text) throws IOException {
         lock.lock();
         try {

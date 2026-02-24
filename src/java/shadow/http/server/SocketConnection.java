@@ -34,6 +34,11 @@ public class SocketConnection implements Connection, Runnable {
         return socketOut;
     }
 
+    @Override
+    public boolean isActive() {
+        return !socket.isClosed();
+    }
+
     public void upgrade(Exchange next) {
         this.exchange = next;
     }

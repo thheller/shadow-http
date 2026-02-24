@@ -22,9 +22,10 @@ public class Server {
     public void setHandlers(HttpHandler... handlers) {
         HttpHandler[] prev = this.handlers;
 
-        this.handlers = handlers;
-        for (HttpHandler handler : handlers) {
-            handler.addedToServer(this);
+        this.handlers = new HttpHandler[handlers.length];
+        for (int i = 0; i < handlers.length; i++) {
+            HttpHandler handler = handlers[i];
+            this.handlers[i] = handler.addedToServer(this);
         }
 
         if (prev != null) {

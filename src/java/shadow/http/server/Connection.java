@@ -10,4 +10,6 @@ public interface Connection {
     OutputStream getOutputStream() throws IOException;
 
     void upgrade(Exchange next);
+
+    boolean isActive();
 }

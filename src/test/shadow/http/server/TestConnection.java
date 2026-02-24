@@ -37,6 +37,11 @@ public class TestConnection implements Connection {
     Exchange upgraded = null;
 
     @Override
+    public boolean isActive() {
+        return true;
+    }
+
+    @Override
     public Server getServer() {
         return server;
     }

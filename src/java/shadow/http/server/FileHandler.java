@@ -164,8 +164,9 @@ public class FileHandler implements HttpHandler {
     }
 
     @Override
-    public void addedToServer(Server server) {
+    public HttpHandler addedToServer(Server server) {
         this.server = server;
+        return this;
     }
 
     String keyForPath(Path path) {

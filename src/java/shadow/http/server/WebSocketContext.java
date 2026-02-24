@@ -3,6 +3,9 @@ package shadow.http.server;
 import java.io.IOException;
 
 public interface WebSocketContext {
+
+    boolean isOpen();
+
     void sendText(String text) throws IOException;
 
     /*

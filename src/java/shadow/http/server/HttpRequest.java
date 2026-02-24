@@ -44,4 +44,24 @@ public class HttpRequest {
         sb.append("\r\n");
         return sb.toString();
     }
+
+    public String getMethod() {
+        return method;
+    }
+
+    public String getTarget() {
+        return target;
+    }
+
+    public String getHttpVersion() {
+        return httpVersion;
+    }
+
+    public List<Header> getHeadersInOrder() {
+        return headersInOrder;
+    }
+
+    public Map<String, String> getHeaders() {
+        return headers;
+    }
 }

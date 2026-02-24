@@ -47,8 +47,9 @@ public class ClasspathHandler implements HttpHandler {
     // -----------------------------------------------------------------------
 
     @Override
-    public void addedToServer(Server server) {
+    public HttpHandler addedToServer(Server server) {
         this.server = server;
+        return this;
     }
 
     @Override

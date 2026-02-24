@@ -6,7 +6,8 @@ public interface HttpHandler {
 
     void handle(HttpContext context, HttpRequest request) throws IOException;
 
-    default void addedToServer(Server server) {
+    default HttpHandler addedToServer(Server server) {
+        return this;
     }
 
     default void cleanup() {
