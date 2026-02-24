@@ -43,12 +43,12 @@
                    {:on-open
                     (fn [socket]
                       (prn [:on-open socket])
-                      (ws/send socket "hello world"))
+                      (ring-ws/send socket "hello world"))
 
                     :on-message
                     (fn [socket message]
                       (prn [:on-message message])
-                      (ws/send socket message))
+                      (ring-ws/send socket message))
 
                     :on-close
                     (fn [socket status reason]
@@ -56,7 +56,7 @@
                   {:status 200
                    :body "Hello World"}))))
 
-  (.setHandlers server (into-array HttpHandler [files ring]))
+  (.setHandlers server [files ring])
   (.start server 5008)
 
   (prn server)

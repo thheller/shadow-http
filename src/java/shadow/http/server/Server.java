@@ -36,7 +36,7 @@ public class Server {
     }
 
     public void setHandlers(List<HttpHandler> handlers) {
-        setHandlers((HttpHandler[]) handlers.toArray());
+        setHandlers(handlers.toArray(new HttpHandler[0]));
     }
 
     void handle(HttpContext ctx, HttpRequest request) throws IOException {
