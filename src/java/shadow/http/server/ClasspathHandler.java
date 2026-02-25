@@ -140,7 +140,7 @@ public class ClasspathHandler implements HttpHandler {
             response.setHeader("last-modified", lastModified);
         }
 
-        try (InputStream in = new BufferedInputStream(conn.getInputStream(), 16384)) {
+        try (InputStream in = new BufferedInputStream(conn.getInputStream(), server.config.outputBufferSize)) {
             response.writeStream(in);
         }
     }

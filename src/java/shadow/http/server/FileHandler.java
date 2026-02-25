@@ -151,7 +151,8 @@ public class FileHandler implements HttpHandler {
             response.setHeader("cache-control", "private, no-cache");
             response.setHeader("last-modified", lastModified);
 
-            try (InputStream in = new BufferedInputStream(Files.newInputStream(fileInfo.path), 16384)) {
+            // using the outputBufferSize since we want to fill that asap, might as well do it all at once
+            try (InputStream in = new BufferedInputStream(Files.newInputStream(fileInfo.path), server.config.outputBufferSize)) {
                 response.writeStream(in);
             }
         }

@@ -9,6 +9,15 @@ public class Config {
     final Map<String, String> mimeTypes = new HashMap<>();
     final Set<String> compressibleTypes = new HashSet<>();
 
+    // directly affects how much memory each connection uses
+    // larger input isn't all that relevant
+    // larger output means better performance for larger responses
+    // smaller means less memory use overall, but that is only really relevant
+    // when having a lof of open connections. which we won't really have
+    // in a shadow-cljs setting. this seems like a good balance
+    int inputBufferSize = 8192;
+    int outputBufferSize = 65536; //  32768;
+
     public Config() {
         mimeTypes.put("html", "text/html");
         mimeTypes.put("htm", "text/html");
@@ -63,6 +72,22 @@ public class Config {
         compressibleTypes.add("application/wasm");
         compressibleTypes.add("font/woff");
         compressibleTypes.add("font/woff2");
+    }
+
+    public int getInputBufferSize() {
+        return inputBufferSize;
+    }
+
+    public void setInputBufferSize(int inputBufferSize) {
+        this.inputBufferSize = inputBufferSize;
+    }
+
+    public int getOutputBufferSize() {
+        return outputBufferSize;
+    }
+
+    public void setOutputBufferSize(int outputBufferSize) {
+        this.outputBufferSize = outputBufferSize;
     }
 
     public String guessMimeType(String filename) {

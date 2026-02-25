@@ -26,9 +26,12 @@ public class HttpExchange implements Exchange, HttpContext {
     HttpRequest request;
     HttpResponse response;
 
+    final long since;
+
     boolean upgraded = false;
 
     public HttpExchange(Connection connection) throws IOException {
+        this.since = System.currentTimeMillis();
         this.connection = connection;
         this.in = connection.getInputStream();
         this.out = connection.getOutputStream();
@@ -83,6 +86,7 @@ public class HttpExchange implements Exchange, HttpContext {
         }
         this.upgraded = true;
     }
+
     @Override
     public HttpResponse respond() throws IOException {
         if (this.response != null) {
@@ -98,44 +102,35 @@ public class HttpExchange implements Exchange, HttpContext {
 
     @Override
     public void process() throws IOException {
-        try {
-            for (; ; ) {
+        for (; ; ) {
 
-                try {
-                    request = httpIn.readRequest();
-                } catch (BadRequestException e) {
-                    respond().setStatus(400).setContentType("text/plain").setCloseAfter(true).writeString(e.getMessage());
-                    break;
-                }
-
-                connection.getServer().handle(this, request);
-
-                if (!didRespond()) {
-                    respond().setStatus(404)
-                            .setContentType("text/plain")
-                            .writeString("Not found.");
-                }
-
-                if (response.state != HttpResponse.State.COMPLETE) {
-                    throw new IllegalStateException("request not actually completed");
-                }
-
-                HttpResponse res = response;
-
-                request = null;
-                response = null;
-
-                if (upgraded || res.closeAfter) {
-                    break;
-                }
+            try {
+                request = httpIn.readRequest();
+            } catch (BadRequestException e) {
+                respond().setStatus(400).setContentType("text/plain").setCloseAfter(true).writeString(e.getMessage());
+                break;
             }
-        } catch (EOFException e) {
-            // ignore
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (Exception e) {
-            e.printStackTrace();
+
+            connection.getServer().handle(this, request);
+
+            if (!didRespond()) {
+                respond().setStatus(404)
+                        .setContentType("text/plain")
+                        .writeString("Not found.");
+            }
+
+            if (response.state != HttpResponse.State.COMPLETE) {
+                throw new IllegalStateException("request not actually completed");
+            }
+
+            HttpResponse res = response;
+
+            request = null;
+            response = null;
+
+            if (upgraded || res.closeAfter) {
+                break;
+            }
         }
     }
-
 }

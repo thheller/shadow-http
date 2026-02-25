@@ -77,6 +77,16 @@ public class Server {
         this.acceptorThread.join();
     }
 
+    // FIXME: collect stats, maybe hookup metrics?
+    // not sure if actually worth for shadow-cljs, but might be interesting
+    // there is potentially an absurd amount of data going over the wire
+    // dev JS + source maps is probably several MB per page view
+    void connectionStarted(SocketConnection connection) {
+    }
+
+    void connectionCompleted(SocketConnection connection) {
+    }
+
     private static class Acceptor implements Runnable {
 
         private final Server server;

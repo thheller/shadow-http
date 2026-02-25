@@ -46,14 +46,15 @@ public class SocketConnection implements Connection, Runnable {
     @Override
     public void run() {
         try {
-            // FIXME: buffer sizes should be configurable
-            this.socketIn = new BufferedInputStream(socket.getInputStream(), 8192);
-            this.socketOut = new BufferedOutputStream(socket.getOutputStream(), 65536);
+            this.socketIn = new BufferedInputStream(socket.getInputStream(), server.config.inputBufferSize);
+            this.socketOut = new BufferedOutputStream(socket.getOutputStream(), server.config.outputBufferSize);
 
             // starts out as http, may upgrade into websocket, at which point we don't need http specifics
             // anymore, since there is no downgrade. so keeping everything http related in HttpExchange
             // allows that to be collected after things upgraded
             this.exchange = new HttpExchange(this);
+
+            server.connectionStarted(this);
 
             for (; ; ) {
                 if (exchange != null) {
@@ -69,10 +70,14 @@ public class SocketConnection implements Connection, Runnable {
                 }
             }
         } catch (SocketException e) {
-            // ignore
+            // ignore, probably just closed
+            // FIXME: check/log?
         } catch (IOException e) {
-            // ignore
-            // FIXME: log?
+            // ignore, also probably socket just closed
+            // FIXME: check/log?
+        } catch (Exception e) {
+            // FIXME: check/log?
+            e.printStackTrace();
         }
 
         if (!socket.isClosed()) {
@@ -82,5 +87,7 @@ public class SocketConnection implements Connection, Runnable {
                 // shutting down, don't care
             }
         }
+
+        server.connectionCompleted(this);
     }
 }
