@@ -1,6 +1,8 @@
 package shadow.http.server;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public class TestServer {
 
@@ -17,6 +19,12 @@ public class TestServer {
                         return this;
                     }
                 });
+            } else if (request.target.equals("/upload")) {
+                try (InputStream body = request.body()) {
+                    try (OutputStream out = request.respond().setStatus(200).setCompress(true).setChunked(true).setContentType("text/plain").body()) {
+                        body.transferTo(out);
+                    }
+                }
             } else if (request.target.equals("/sse")) {
 
                 HttpResponse response = request.respond()
