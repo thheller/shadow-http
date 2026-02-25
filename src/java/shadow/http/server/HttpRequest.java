@@ -1,9 +1,6 @@
 package shadow.http.server;
 
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class HttpRequest {
     public final String method;
@@ -16,7 +13,7 @@ public class HttpRequest {
         this.method = method;
         this.target = requestTarget;
         this.httpVersion = httpVersion;
-        this.headersInOrder = new LinkedList<Header>();
+        this.headersInOrder = new ArrayList<Header>();
         this.headers = new HashMap<>();
     }
 

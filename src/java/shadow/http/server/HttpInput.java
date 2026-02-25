@@ -296,7 +296,7 @@ public class HttpInput {
      * Followed by a final empty CRLF (the blank line ending the chunked-body).
      */
     private List<Header> readTrailerSection() throws IOException {
-        List<Header> trailers = new LinkedList<>();
+        List<Header> trailers = new ArrayList<>();
         while (true) {
             // Peek: if next bytes are CRLF (or bare LF), it's the blank line.
             in.mark(2);
