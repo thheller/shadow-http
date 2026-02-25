@@ -78,7 +78,7 @@ Started this as an experiment mostly. Wanted to give AI a shot and this seemed l
 
 ## Pending
 
-- request bodies are not currently accessible. will expose basic InputStream that handles chunked input. maybe something to read multipart requests.
+- 
 
 ## TBD
 

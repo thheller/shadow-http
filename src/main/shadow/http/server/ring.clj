@@ -11,7 +11,7 @@
 
 (defn build-request-map
   "Builds a Ring request map from an HttpRequest."
-  [^HttpRequest request]
+  [^HttpContext ctx ^HttpRequest request]
   (let [target (.getTarget request)
         qi (.indexOf target (int \?))
         uri (if (neg? qi) target (subs target 0 qi))
@@ -42,7 +42,12 @@
              :server-name (or server-name "localhost")
              :server-port (or server-port 80)
              :remote-addr ""}
-      query-string (assoc :query-string query-string))))
+      query-string
+      (assoc :query-string query-string)
+
+      (.requestHasBody ctx)
+      (assoc :body (.requestBody ctx))
+      )))
 
 (defn write-ring-response
   "Writes a Ring response map to the HttpResponse."
@@ -170,7 +175,7 @@
   (cleanup [this])
 
   (handle [this ctx request]
-    (let [ring-request (build-request-map request)
+    (let [ring-request (build-request-map ctx request)
           ring-response (handler-fn ring-request)]
 
       (when ring-response

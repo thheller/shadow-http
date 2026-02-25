@@ -110,7 +110,7 @@ public class HttpResponse {
         if (state == State.PENDING) {
             if (isFinal) {
                 // don't compress small responses
-                if (s.length() < 850) {
+                if (s.length() < 850 || !compress) {
                     setContentLength(s.length());
                     setCompress(false);
                 }

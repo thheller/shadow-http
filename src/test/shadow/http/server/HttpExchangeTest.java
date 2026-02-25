@@ -26,7 +26,7 @@ public class HttpExchangeTest {
         HttpExchange exchange = new HttpExchange(con);
         exchange.process();
 
-        return  out.toString(StandardCharsets.UTF_8);
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     @Test
@@ -78,61 +78,121 @@ public class HttpExchangeTest {
         assertEquals(expectedResponse + expectedResponse, result);
     }
 
-    /*
-        @Test
-        void postRequestWithBody() throws IOException {
-            HttpHandler echo = (context, request) -> {
-                String body = new String(request.getBody(), StandardCharsets.UTF_8);
-                context.respond().writeString("Echo: " + body);
-                return true;
-            };
+    @Test
+    void postRequestWithBody() throws IOException {
+        HttpHandler echo = (context, request) -> {
+            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            context.respond().writeString("Echo: " + body);
+        };
 
-            String result = run(echo,
-                    "POST /submit HTTP/1.1\r\n" +
-                            "Host: example.com\r\n" +
-                            "Content-Length: 11\r\n" +
-                            "\r\n" +
-                            "hello=world"
-            );
+        String result = run(echo,
+                "POST /submit HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "Content-Length: 11\r\n" +
+                        "\r\n" +
+                        "hello=world"
+        );
 
-            assertEquals("HTTP/1.1 200 \r\n" +
-                    "content-type: text/html\r\n" +
-                    "content-length: 17\r\n" +
-                    "connection: keep-alive\r\n" +
-                    "\r\n" +
-                    "Echo: hello=world", result);
-        }
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-type: text/html\r\n" +
+                "content-length: 17\r\n" +
+                "connection: keep-alive\r\n" +
+                "\r\n" +
+                "Echo: hello=world", result);
+    }
 
-        @Test
-        void largeBody() throws IOException {
-            String largePayload = "x".repeat(10000);
+    @Test
+    void postRequestWithBodyThatsNotHandled() throws IOException {
+        HttpHandler echo = (context, request) -> {
+            context.respond().writeString("totally ignored body");
+        };
 
-            HttpHandler echo = (context, request) -> {
-                String body = new String(request.getBody(), StandardCharsets.UTF_8);
-                context.respond().writeString(body);
-                return true;
-            };
+        String result = run(echo,
+                "POST /submit HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "Content-Length: 11\r\n" +
+                        "\r\n" +
+                        "hello=world" +
+                        "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
 
-            String result = run(echo,
-                    "POST /upload HTTP/1.1\r\n" +
-                            "Host: example.com\r\n" +
-                            "Content-Length: 10000\r\n" +
-                            "\r\n" +
-                            largePayload
-            );
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-type: text/html\r\n" +
+                "content-length: 20\r\n" +
+                "connection: keep-alive\r\n" +
+                "\r\n" +
+                "totally ignored body" +
+                "HTTP/1.1 200 \r\n" +
+                "content-type: text/html\r\n" +
+                "content-length: 20\r\n" +
+                "connection: keep-alive\r\n" +
+                "\r\n" +
+                "totally ignored body", result);
+    }
 
-            assertEquals("HTTP/1.1 200 \r\n" +
-                    "content-type: text/html\r\n" +
-                    "content-length: 10000\r\n" +
-                    "connection: keep-alive\r\n" +
-                    "\r\n" +
-                    largePayload, result);
-        }
-    */
+    @Test
+    void postRequestWithChunkedBody() throws IOException {
+        // Build a chunked-encoded request body: two data chunks + terminal chunk
+        String chunk1 = "x".repeat(4096);
+        String chunk2 = "y".repeat(4096);
+        String chunkedBody =
+                Integer.toHexString(chunk1.length()) + "\r\n" + chunk1 + "\r\n" +
+                Integer.toHexString(chunk2.length()) + "\r\n" + chunk2 + "\r\n" +
+                "0\r\n\r\n";
+
+        HttpHandler echo = (context, request) -> {
+            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            context.respond().setChunked(false).setCompress(false).writeString(body);
+        };
+
+        String result = run(echo,
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "\r\n" +
+                        chunkedBody
+        );
+
+        String expectedBody = chunk1 + chunk2;
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-type: text/html\r\n" +
+                "content-length: " + expectedBody.length() + "\r\n" +
+                "connection: keep-alive\r\n" +
+                "\r\n" +
+                expectedBody, result);
+    }
+
+    @Test
+    void largeBody() throws IOException {
+        String largePayload = "x".repeat(10000);
+
+        HttpHandler echo = (context, request) -> {
+            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            context.respond().setChunked(false).setCompress(false).writeString(body);
+        };
+
+        String result = run(echo,
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "Content-Length: 10000\r\n" +
+                        "\r\n" +
+                        largePayload
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-type: text/html\r\n" +
+                "content-length: 10000\r\n" +
+                "connection: keep-alive\r\n" +
+                "\r\n" +
+                largePayload, result);
+    }
 
     @Test
     void notFoundWhenUnhandled() throws IOException {
-        HttpHandler neverHandles = (context, request) -> {};
+        HttpHandler neverHandles = (context, request) -> {
+        };
 
         String result = run(neverHandles,
                 "GET /missing HTTP/1.1\r\n" +

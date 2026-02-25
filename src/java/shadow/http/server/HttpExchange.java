@@ -24,6 +24,8 @@ public class HttpExchange implements Exchange, HttpContext {
     final HttpInput httpIn;
 
     HttpRequest request;
+    InputStream requestBody;
+
     HttpResponse response;
 
     final long since;
@@ -87,6 +89,80 @@ public class HttpExchange implements Exchange, HttpContext {
         this.upgraded = true;
     }
 
+    /**
+     * Returns true if the current request is expected to carry a message body,
+     * per RFC 9112 Section 6 / 6.3:
+     *
+     *   "The presence of a message body in a request is signaled by a
+     *    Content-Length or Transfer-Encoding header field."
+     *
+     * A Transfer-Encoding header always signals a body (the body length is
+     * determined by the encoding itself, e.g. chunked).
+     *
+     * A Content-Length header signals a body only when its value is greater
+     * than zero; Content-Length: 0 explicitly means no content.
+     */
+    @Override
+    public boolean requestHasBody() {
+        if (request == null) {
+            throw new IllegalStateException("No active request");
+        }
+
+        // Transfer-Encoding takes precedence (RFC 9112 Section 6.3 rule 3 & 4).
+        // Its mere presence signals that a body is being sent.
+        if (request.hasHeader("transfer-encoding")) {
+            return true;
+        }
+
+        // Content-Length without Transfer-Encoding (RFC 9112 Section 6.2 & 6.3 rule 5+).
+        // A value of 0 means explicitly no body content.
+        String contentLength = request.getHeaderValue("content-length");
+        if (contentLength != null) {
+            try {
+                return Long.parseLong(contentLength.trim()) > 0;
+            } catch (NumberFormatException e) {
+                // Invalid Content-Length — treat conservatively as no body signal;
+                // requestBody() will throw if actually called.
+                return false;
+            }
+        }
+
+        // No framing headers present — no body.
+        return false;
+    }
+
+    @Override
+    public InputStream requestBody() throws IOException {
+        if (request == null) {
+            throw new IllegalStateException("No active request");
+        }
+
+        if (requestBody != null) {
+            return requestBody;
+        }
+
+        String transferEncoding = request.getHeaderValue("transfer-encoding");
+        if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
+            return requestBody = new ChunkedInputStream(httpIn);
+        }
+
+        String contentLengthHeader = request.getHeaderValue("content-length");
+        if (contentLengthHeader != null) {
+            long contentLength;
+            try {
+                contentLength = Long.parseLong(contentLengthHeader.trim());
+            } catch (NumberFormatException e) {
+                throw new IOException("Invalid Content-Length header: " + contentLengthHeader);
+            }
+            if (contentLength < 0) {
+                throw new IOException("Negative Content-Length: " + contentLength);
+            }
+            return requestBody = new ContentLengthInputStream(in, contentLength);
+        }
+
+        throw new IOException("Request has no body (no Content-Length or Transfer-Encoding: chunked header)");
+    }
+
     @Override
     public HttpResponse respond() throws IOException {
         if (this.response != null) {
@@ -121,6 +197,12 @@ public class HttpExchange implements Exchange, HttpContext {
                         .writeString("Not found.");
             }
 
+            if (requestHasBody()) {
+                // FIXME: point is to entirely drain the request body
+                // or should it be an error if the handler didn't do that?
+                requestBody().close();
+            }
+
             if (response.state != HttpResponse.State.COMPLETE) {
                 throw new IllegalStateException("request not actually completed");
             }
@@ -128,6 +210,7 @@ public class HttpExchange implements Exchange, HttpContext {
             HttpResponse res = response;
 
             request = null;
+            requestBody = null;
             response = null;
 
             if (upgraded || res.closeAfter) {
