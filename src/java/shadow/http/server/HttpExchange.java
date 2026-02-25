@@ -109,6 +109,8 @@ public class HttpExchange implements Exchange, HttpContext {
             } catch (BadRequestException e) {
                 respond().setStatus(400).setContentType("text/plain").setCloseAfter(true).writeString(e.getMessage());
                 break;
+            } catch (EOFException e) {
+                break;
             }
 
             connection.getServer().handle(this, request);
