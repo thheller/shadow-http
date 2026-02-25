@@ -123,8 +123,7 @@ public class ClasspathHandler implements HttpHandler {
 
         HttpResponse response = ctx.respond()
                 .setStatus(200)
-                .setContentType(mimeType)
-                .setFlushEveryChunk(false);
+                .setContentType(mimeType);
 
         if (compress) {
             response.setCompress(true);

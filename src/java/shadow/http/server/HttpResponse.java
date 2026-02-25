@@ -35,7 +35,6 @@ public class HttpResponse {
     public boolean compress = false;
     public boolean body = true;
     public boolean chunked = true;
-    public boolean flushEveryChunk = true;
     public boolean closeAfter = false;
     public Map<String, String> headers = new HashMap<>();
 
@@ -88,11 +87,6 @@ public class HttpResponse {
     public HttpResponse setChunked(boolean chunked) {
         this.body = true;
         this.chunked = chunked;
-        return this;
-    }
-
-    public HttpResponse setFlushEveryChunk(boolean flushEveryChunk) {
-        this.flushEveryChunk = flushEveryChunk;
         return this;
     }
 
@@ -239,13 +233,13 @@ public class HttpResponse {
         out = new InterceptedCloseOutputStream(this, out);
 
         if (chunked) {
-            out = new ChunkedOutputStream(out, flushEveryChunk);
+            out = new ChunkedOutputStream(out);
         }
 
         // FIXME: if fixed contentLength known could wrap stream to ensure user sends correct amount
 
         if (compress) {
-            out = new GZIPOutputStream(out, 8192);
+            out = new GZIPOutputStream(out, 8192, true);
         }
     }
 

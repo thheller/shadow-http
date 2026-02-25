@@ -93,14 +93,20 @@ public class HttpExchange implements Exchange, HttpContext {
 
     @Override
     public boolean didRespond() {
-        return request != null && response != null;
+        return response != null;
     }
 
     @Override
     public void process() throws IOException {
         try {
             for (; ; ) {
-                HttpRequest request = this.request = httpIn.readRequest();
+
+                try {
+                    request = httpIn.readRequest();
+                } catch (BadRequestException e) {
+                    respond().setStatus(400).setContentType("text/plain").setCloseAfter(true).writeString(e.getMessage());
+                    break;
+                }
 
                 connection.getServer().handle(this, request);
 
@@ -110,18 +116,14 @@ public class HttpExchange implements Exchange, HttpContext {
                             .writeString("Not found.");
                 }
 
-                HttpResponse res = this.response;
-
-                if (res == null) {
-                    throw new IllegalStateException("some handler pretended to handle request but didn't!");
-                }
-
-                if (res.state != HttpResponse.State.COMPLETE) {
+                if (response.state != HttpResponse.State.COMPLETE) {
                     throw new IllegalStateException("request not actually completed");
                 }
 
-                this.request = null;
-                this.response = null;
+                HttpResponse res = response;
+
+                request = null;
+                response = null;
 
                 if (upgraded || res.closeAfter) {
                     break;

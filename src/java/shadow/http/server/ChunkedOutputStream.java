@@ -9,16 +9,14 @@ class ChunkedOutputStream extends OutputStream {
     private static final byte[] LAST_CHUNK = {'0', '\r', '\n', '\r', '\n'};
 
     private final OutputStream out;
-    private final boolean flushEveryChunk;
 
     // this should not use a temporary buffer and the user may want to send chunks of arbitrary size
     // for text/event-stream or so. so we just send whatever chunk size we get from user
     // leaving the user responsible for choosing correct sizes instead of accumulating here and sending fixed size
 
 
-    public ChunkedOutputStream(OutputStream out, boolean flushEveryChunk) {
+    public ChunkedOutputStream(OutputStream out) {
         this.out = out;
-        this.flushEveryChunk = flushEveryChunk;
     }
 
     @Override
@@ -56,9 +54,5 @@ class ChunkedOutputStream extends OutputStream {
         out.write(CRLF);
         out.write(buffer, off, len);
         out.write(CRLF);
-
-        if (flushEveryChunk) {
-            out.flush();
-        }
     }
 }
