@@ -78,7 +78,7 @@ Started this as an experiment mostly. Wanted to give AI a shot and this seemed l
 
 ## Pending
 
-- I may change the API in HttpHandler. At first, I thought it made sense to have a "lightweight" HttpRequest data instance and the HttpContext representing the current mutable connection. But it might be better to just expose a Request object. Currently, the API created by this split is a bit ugly. req.respond() looks cleaner and the body handling as well.
+- 
 
 ## TBD
 

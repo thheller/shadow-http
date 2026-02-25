@@ -6,11 +6,11 @@ public class TestServer {
 
     public static void main(String[] args) throws Exception {
 
-        HttpHandler test = (ctx, request) -> {
+        HttpHandler test = (request) -> {
             if (request.target.equals("/")) {
-                ctx.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
+                request.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
             } else if (request.target.equals("/ws")) {
-                ctx.upgradeToWebSocket(new WebSocketHandler.Base() {
+                request.upgradeToWebSocket(new WebSocketHandler.Base() {
                     @Override
                     public WebSocketHandler onText(String payload) throws IOException {
                         context.sendText(payload);
@@ -19,7 +19,7 @@ public class TestServer {
                 });
             } else if (request.target.equals("/sse")) {
 
-                HttpResponse response = ctx.respond()
+                HttpResponse response = request.respond()
                         .setStatus(200)
                         .setContentType("text/event-stream")
                         .setChunked(true)

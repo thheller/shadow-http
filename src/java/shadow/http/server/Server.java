@@ -40,13 +40,13 @@ public class Server {
         setHandlers(handlers.toArray(new HttpHandler[0]));
     }
 
-    void handle(HttpContext ctx, HttpRequest request) throws IOException {
+    void handle(HttpRequest request) throws IOException {
         HttpHandler[] current = handlers;
 
         for (HttpHandler handler : current) {
-            handler.handle(ctx, request);
+            handler.handle(request);
 
-            if (ctx.didRespond()) {
+            if (request.didRespond()) {
                 break;
             }
         }

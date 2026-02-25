@@ -53,7 +53,7 @@ public class ClasspathHandler implements HttpHandler {
     }
 
     @Override
-    public void handle(HttpContext ctx, HttpRequest request) throws IOException {
+    public void handle(HttpRequest request) throws IOException {
         if (!"GET".equals(request.method)) {
             return;
         }
@@ -108,7 +108,7 @@ public class ClasspathHandler implements HttpHandler {
         if (lastModified != null) {
             String ifModifiedSince = request.getHeaderValue("if-modified-since");
             if (lastModified.equals(ifModifiedSince)) {
-                ctx.respond().setStatus(304).noContent();
+                request.respond().setStatus(304).noContent();
                 return;
             }
         }
@@ -121,7 +121,7 @@ public class ClasspathHandler implements HttpHandler {
 
         boolean compress = contentLength >= 850 && server.config.isCompressible(mimeType);
 
-        HttpResponse response = ctx.respond()
+        HttpResponse response = request.respond()
                 .setStatus(200)
                 .setContentType(mimeType);
 

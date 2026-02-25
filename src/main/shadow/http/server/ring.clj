@@ -6,12 +6,12 @@
     [java.io InputStream File]
     [java.nio ByteBuffer]
     [shadow.http.server
-     HttpHandler HttpContext HttpRequest HttpResponse
-     WebSocketContext WebSocketHandler]))
+     HttpHandler HttpRequest HttpResponse
+     WebSocketConnection WebSocketHandler]))
 
 (defn build-request-map
   "Builds a Ring request map from an HttpRequest."
-  [^HttpContext ctx ^HttpRequest request]
+  [^HttpRequest request]
   (let [target (.getTarget request)
         qi (.indexOf target (int \?))
         uri (if (neg? qi) target (subs target 0 qi))
@@ -45,14 +45,14 @@
       query-string
       (assoc :query-string query-string)
 
-      (.requestHasBody ctx)
-      (assoc :body (.requestBody ctx))
+      (.hasBody request)
+      (assoc :body (.body request))
       )))
 
 (defn write-ring-response
   "Writes a Ring response map to the HttpResponse."
-  [^HttpContext ctx ring-response]
-  (let [^HttpResponse response (.respond ctx)
+  [^HttpRequest request ring-response]
+  (let [^HttpResponse response (.respond request)
         status (get ring-response :status 200)
         headers (get ring-response :headers)
         body (get ring-response :body)]
@@ -112,7 +112,7 @@
       (do (.setContentType response "text/plain")
           (.writeString response (str body))))))
 
-(deftype RingWebSocketHandler [^WebSocketContext ctx listener]
+(deftype RingWebSocketHandler [^WebSocketConnection ctx listener]
   WebSocketHandler
   (start [_ ws-ctx]
     (let [next (RingWebSocketHandler. ws-ctx listener)
@@ -174,23 +174,23 @@
 
   (cleanup [this])
 
-  (handle [this ctx request]
-    (let [ring-request (build-request-map ctx request)
+  (handle [this request]
+    (let [ring-request (build-request-map request)
           ring-response (handler-fn ring-request)]
 
       (when ring-response
         ;; check for websocket upgrade response
         ;; prefer our own impl over ring impl if present
         (if-let [^WebSocketHandler handler (::srv/handler ring-response)]
-          (.upgradeToWebSocket ^HttpContext ctx handler (::srv/protocol ring-response))
+          (.upgradeToWebSocket request handler (::srv/protocol ring-response))
           (if-let [listener (:ring.websocket/listener ring-response)]
             ;; websocket upgrade
             (let [ws-handler (ring-ws-handler listener)
                   sub-protocol (:ring.websocket/protocol ring-response)]
-              (.upgradeToWebSocket ^HttpContext ctx ws-handler sub-protocol))
+              (.upgradeToWebSocket request ws-handler sub-protocol))
 
             ;; normal HTTP response
-            (write-ring-response ctx ring-response)))))))
+            (write-ring-response request ring-response)))))))
 
 (defn handler [handler-fn]
   (RingHandler. nil handler-fn))

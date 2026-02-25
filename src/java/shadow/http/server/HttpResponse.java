@@ -20,7 +20,8 @@ public class HttpResponse {
     private static final byte[] COLON_SP = {':', ' '};
     private static final byte[] HTTP11_START = {'H', 'T', 'T', 'P', '/', '1', '.', '1', ' '};
 
-    private final HttpExchange exchange;
+    private final HttpRequest request;
+
     private OutputStream out;
 
     State state = State.PENDING;
@@ -38,9 +39,9 @@ public class HttpResponse {
     public boolean closeAfter = false;
     public Map<String, String> headers = new HashMap<>();
 
-    public HttpResponse(HttpExchange exchange) {
-        this.exchange = exchange;
-        this.out = exchange.out;
+    public HttpResponse(HttpRequest request, OutputStream out) {
+        this.request = request;
+        this.out = out;
     }
 
     public HttpResponse setStatus(int status) {
@@ -187,7 +188,7 @@ public class HttpResponse {
         }
 
         if (body && compress) {
-            String acceptEncoding = exchange.request.getHeaderValue("accept-encoding");
+            String acceptEncoding = request.getHeaderValue("accept-encoding");
 
             // FIXME: not sure if worth adding dependencies to get zstd or brotli
             // only gzip is fine for now
@@ -204,7 +205,7 @@ public class HttpResponse {
             writeHeader("content-length", Long.toString(contentLength));
         }
 
-        if (!closeAfter && "close".equals(exchange.request.getHeaderValue("connection"))) {
+        if (!closeAfter && "close".equals(request.getHeaderValue("connection"))) {
             closeAfter = true;
         }
 

@@ -15,7 +15,7 @@ public class HttpInputTest {
     private HttpInput inputFor(String raw) {
         byte[] bytes = raw.getBytes(StandardCharsets.US_ASCII);
         // BufferedInputStream supports mark/reset
-        return new HttpInput(new BufferedInputStream(new ByteArrayInputStream(bytes)));
+        return new HttpInput(null, new BufferedInputStream(new ByteArrayInputStream(bytes)));
     }
 
     private HttpRequest parse(String raw) throws IOException {
@@ -241,7 +241,7 @@ public class HttpInputTest {
         assertThrows(BadRequestException.class, () -> {
             byte[] bytes = "GET /path\0end HTTP/1.1\r\nHost: example.com\r\n\r\n"
                     .getBytes(StandardCharsets.US_ASCII);
-            new HttpInput(new BufferedInputStream(new ByteArrayInputStream(bytes))).readRequest();
+            new HttpInput(null, new BufferedInputStream(new ByteArrayInputStream(bytes))).readRequest();
         });
     }
 }

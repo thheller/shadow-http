@@ -4,7 +4,7 @@ import java.io.IOException;
 
 public interface WebSocketHandler {
 
-    default WebSocketHandler start(WebSocketContext ctx) {
+    default WebSocketHandler start(WebSocketConnection ctx) {
         return this;
     }
     default WebSocketHandler onText(String payload) throws IOException {
@@ -25,13 +25,13 @@ public interface WebSocketHandler {
     }
 
     class Base implements WebSocketHandler {
-        protected WebSocketContext context;
+        protected WebSocketConnection context;
 
         public Base() {
         }
 
         @Override
-        public WebSocketHandler start(WebSocketContext ctx) {
+        public WebSocketHandler start(WebSocketConnection ctx) {
             this.context = ctx;
             return this;
         }

@@ -75,7 +75,7 @@ public class FileHandler implements HttpHandler {
     }
 
     @Override
-    public void handle(HttpContext ctx, HttpRequest request) throws IOException {
+    public void handle(HttpRequest request) throws IOException {
 
         // FIXME: HEAD support
         // POST should never serve files right?
@@ -121,7 +121,7 @@ public class FileHandler implements HttpHandler {
 
         String ifModifiedSince = request.getHeaderValue("if-modified-since");
         if (lastModified.equals(ifModifiedSince)) {
-            ctx.respond().setStatus(304).noContent();
+            request.respond().setStatus(304).noContent();
         } else {
             long size = Files.size(fileInfo.path);
 
@@ -133,7 +133,7 @@ public class FileHandler implements HttpHandler {
             // FIXME: config option
             boolean compress = size >= 850 && server.config.isCompressible(mimeType);
 
-            HttpResponse response = ctx.respond().setStatus(200).setContentType(mimeType);
+            HttpResponse response = request.respond().setStatus(200).setContentType(mimeType);
 
             if (compress) {
                 response.setCompress(true);

@@ -7,7 +7,7 @@ import java.util.*;
 
 /**
  * A Stream based HTTP Parser following RFC 9112
- *
+ * <p>
  * requires InputStream that supports mark, assuming we'll get one and don't check
  */
 public class HttpInput {
@@ -27,10 +27,12 @@ public class HttpInput {
     // not sure anything valid will ever send that
     private static final int MAX_HEADERS = 200;
 
+    private final HttpExchange exchange;
     private final InputStream in;
     private final StringBuilder buf = new StringBuilder(256);
 
-    public HttpInput(InputStream in) {
+    public HttpInput(HttpExchange exchange, InputStream in) {
+        this.exchange = exchange;
         this.in = in;
     }
 
@@ -52,7 +54,7 @@ public class HttpInput {
         String version = readVersion();
         expectCrlf();
 
-        HttpRequest request = new HttpRequest(method, target, version);
+        HttpRequest request = new HttpRequest(exchange, method, target, version);
 
         // Section 5: header fields until empty line
         readHeaders(request);
@@ -66,18 +68,18 @@ public class HttpInput {
     /**
      * Reads the next chunk from a chunked Transfer-Encoding message body.
      * Per RFC 9112 Section 7.1:
-     *
-     *   chunked-body = *chunk last-chunk trailer-section CRLF
-     *   chunk        = chunk-size [ chunk-ext ] CRLF chunk-data CRLF
-     *   last-chunk   = 1*"0" [ chunk-ext ] CRLF
-     *   chunk-size   = 1*HEXDIG
+     * <p>
+     * chunked-body = *chunk last-chunk trailer-section CRLF
+     * chunk        = chunk-size [ chunk-ext ] CRLF chunk-data CRLF
+     * last-chunk   = 1*"0" [ chunk-ext ] CRLF
+     * chunk-size   = 1*HEXDIG
      *
      * @return an {@link Chunk}; call {@link Chunk#isLast()} to detect
-     *         the terminal chunk. After the terminal chunk, no further
-     *         {@code readChunk()} calls should be made on this connection
-     *         unless it is reused for a new request.
+     * the terminal chunk. After the terminal chunk, no further
+     * {@code readChunk()} calls should be made on this connection
+     * unless it is reused for a new request.
      * @throws BadRequestException if the chunk framing is malformed.
-     * @throws IOException on I/O errors.
+     * @throws IOException         on I/O errors.
      */
     public Chunk readChunk(int maxSize) throws IOException {
         // --- chunk-size ---
@@ -161,11 +163,11 @@ public class HttpInput {
     /**
      * Reads zero or more chunk extensions.
      * Per RFC 9112 Section 7.1.1:
-     *
-     *   chunk-ext      = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
-     *   chunk-ext-name = token
-     *   chunk-ext-val  = token / quoted-string
-     *
+     * <p>
+     * chunk-ext      = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
+     * chunk-ext-name = token
+     * chunk-ext-val  = token / quoted-string
+     * <p>
      * Unrecognized extensions MUST be ignored per the RFC.
      * Returns a LinkedHashMap preserving insertion order.
      */
@@ -185,7 +187,7 @@ public class HttpInput {
 
             if (b != ';') {
                 throw new BadRequestException(
-                    "Expected ';' or CRLF in chunk extension, got: 0x" + Integer.toHexString(b));
+                        "Expected ';' or CRLF in chunk extension, got: 0x" + Integer.toHexString(b));
             }
 
             // Consume BWS before name.
@@ -268,7 +270,7 @@ public class HttpInput {
                 int escaped = readByte();
                 if (escaped != HTAB && escaped != SP && !isFieldVchar(escaped)) {
                     throw new BadRequestException(
-                        "Invalid quoted-pair in quoted-string: 0x" + Integer.toHexString(escaped));
+                            "Invalid quoted-pair in quoted-string: 0x" + Integer.toHexString(escaped));
                 }
                 buf.append((char) escaped);
             } else if (b == HTAB || b == SP || b == 0x21
@@ -278,7 +280,7 @@ public class HttpInput {
                 buf.append((char) b);
             } else {
                 throw new BadRequestException(
-                    "Invalid octet in quoted-string: 0x" + Integer.toHexString(b));
+                        "Invalid octet in quoted-string: 0x" + Integer.toHexString(b));
             }
             if (buf.length() > MAX_HEADER_VALUE_LENGTH) {
                 throw new BadRequestException("Chunk extension quoted-string too long");
@@ -290,9 +292,9 @@ public class HttpInput {
     /**
      * Reads the trailer section of a chunked message and the terminating CRLF.
      * Per RFC 9112 Section 7.1.2:
-     *
-     *   trailer-section = *( field-line CRLF )
-     *
+     * <p>
+     * trailer-section = *( field-line CRLF )
+     * <p>
      * Followed by a final empty CRLF (the blank line ending the chunked-body).
      */
     private List<Header> readTrailerSection() throws IOException {
@@ -320,7 +322,7 @@ public class HttpInput {
             int colon = readByte();
             if (colon != ':') {
                 throw new BadRequestException(
-                    "Expected ':' after trailer field name, got: 0x" + Integer.toHexString(colon));
+                        "Expected ':' after trailer field name, got: 0x" + Integer.toHexString(colon));
             }
             String value = readHeaderValue();
             trailers.add(new Header(name, name.toLowerCase(), value));

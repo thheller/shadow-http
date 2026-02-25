@@ -2,7 +2,7 @@ package shadow.http.server;
 
 import java.io.IOException;
 
-public interface WebSocketContext {
+public interface WebSocketConnection {
 
     boolean isOpen();
 

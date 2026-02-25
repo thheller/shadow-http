@@ -31,14 +31,14 @@ public class HttpExchangeTest {
 
     @Test
     void testWebSocketAcceptKey() throws NoSuchAlgorithmException {
-        String result = HttpExchange.computeWebSocketAcceptKey("dGhlIHNhbXBsZSBub25jZQ==");
+        String result = HttpRequest.computeWebSocketAcceptKey("dGhlIHNhbXBsZSBub25jZQ==");
         assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", result);
     }
 
     @Test
     void simpleGetRequest() throws IOException {
-        HttpHandler helloWorld = (context, request) -> {
-            context.respond().writeString("Hello World!");
+        HttpHandler helloWorld = (request) -> {
+            request.respond().writeString("Hello World!");
         };
 
         String result = run(helloWorld,
@@ -57,8 +57,8 @@ public class HttpExchangeTest {
 
     @Test
     void simpleMultipleRequests() throws IOException {
-        HttpHandler helloWorld = (context, request) -> {
-            context.respond().writeString("Hello World!");
+        HttpHandler helloWorld = (request) -> {
+            request.respond().writeString("Hello World!");
         };
 
         String request = "GET / HTTP/1.1\r\n" +
@@ -80,9 +80,9 @@ public class HttpExchangeTest {
 
     @Test
     void postRequestWithBody() throws IOException {
-        HttpHandler echo = (context, request) -> {
-            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
-            context.respond().writeString("Echo: " + body);
+        HttpHandler echo = (request)-> {
+            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
+            request.respond().writeString("Echo: " + body);
         };
 
         String result = run(echo,
@@ -103,8 +103,8 @@ public class HttpExchangeTest {
 
     @Test
     void postRequestWithBodyThatsNotHandled() throws IOException {
-        HttpHandler echo = (context, request) -> {
-            context.respond().writeString("totally ignored body");
+        HttpHandler echo = (request)-> {
+            request.respond().writeString("totally ignored body");
         };
 
         String result = run(echo,
@@ -142,9 +142,9 @@ public class HttpExchangeTest {
                 Integer.toHexString(chunk2.length()) + "\r\n" + chunk2 + "\r\n" +
                 "0\r\n\r\n";
 
-        HttpHandler echo = (context, request) -> {
-            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
-            context.respond().setChunked(false).setCompress(false).writeString(body);
+        HttpHandler echo = (request)-> {
+            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
+            request.respond().setChunked(false).setCompress(false).writeString(body);
         };
 
         String result = run(echo,
@@ -168,9 +168,9 @@ public class HttpExchangeTest {
     void largeBody() throws IOException {
         String largePayload = "x".repeat(10000);
 
-        HttpHandler echo = (context, request) -> {
-            String body = new String(context.requestBody().readAllBytes(), StandardCharsets.UTF_8);
-            context.respond().setChunked(false).setCompress(false).writeString(body);
+        HttpHandler echo = (request)-> {
+            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
+            request.respond().setChunked(false).setCompress(false).writeString(body);
         };
 
         String result = run(echo,
@@ -191,7 +191,7 @@ public class HttpExchangeTest {
 
     @Test
     void notFoundWhenUnhandled() throws IOException {
-        HttpHandler neverHandles = (context, request) -> {
+        HttpHandler neverHandles = (request)-> {
         };
 
         String result = run(neverHandles,
@@ -210,8 +210,8 @@ public class HttpExchangeTest {
 
     @Test
     void customStatusCode() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().setStatus(201).writeString("Created");
+        HttpHandler handler = (request)-> {
+            request.respond().setStatus(201).writeString("Created");
         };
 
         String result = run(handler,
@@ -230,8 +230,8 @@ public class HttpExchangeTest {
 
     @Test
     void customContentType() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond()
+        HttpHandler handler = (request)-> {
+            request.respond()
                     .setContentType("application/json")
                     .writeString("{\"ok\":true}");
         };
@@ -252,8 +252,8 @@ public class HttpExchangeTest {
 
     @Test
     void customResponseHeader() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond()
+        HttpHandler handler = (request)-> {
+            request.respond()
                     .setHeader("x-custom", "foobar")
                     .writeString("ok");
         };
@@ -275,9 +275,9 @@ public class HttpExchangeTest {
 
     @Test
     void requestHeadersAreAccessible() throws IOException {
-        HttpHandler handler = (context, request) -> {
+        HttpHandler handler = (request)-> {
             String ua = request.getHeaderValue("user-agent");
-            context.respond().writeString("UA: " + ua);
+            request.respond().writeString("UA: " + ua);
         };
 
         String result = run(handler,
@@ -297,8 +297,8 @@ public class HttpExchangeTest {
 
     @Test
     void requestPathAndMethodAccessible() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().writeString(request.method + " " + request.target);
+        HttpHandler handler = (request)-> {
+            request.respond().writeString(request.method + " " + request.target);
         };
 
         String result = run(handler,
@@ -317,8 +317,8 @@ public class HttpExchangeTest {
 
     @Test
     void emptyBodyResponse() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().setStatus(204).setContentLength(0).noContent();
+        HttpHandler handler = (request)-> {
+            request.respond().setStatus(204).setContentLength(0).noContent();
         };
 
         String result = run(handler,
@@ -335,10 +335,10 @@ public class HttpExchangeTest {
 
     @Test
     void doubleRespondThrows() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().writeString("first");
+        HttpHandler handler = (request)-> {
+            request.respond().writeString("first");
             try {
-                context.respond();
+                request.respond();
             } catch (IllegalStateException e) {
                 assertEquals("already responded", e.getMessage());
             }
@@ -353,8 +353,8 @@ public class HttpExchangeTest {
 
     @Test
     void emptyInputProducesNoOutput() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().writeString("should not happen");
+        HttpHandler handler = (request)-> {
+            request.respond().writeString("should not happen");
         };
 
         String result = run(handler, "");
@@ -364,8 +364,8 @@ public class HttpExchangeTest {
 
     @Test
     void requestWithQueryString() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond().writeString("path=" + request.target);
+        HttpHandler handler = (request)-> {
+            request.respond().writeString("path=" + request.target);
         };
 
         String result = run(handler,
@@ -386,9 +386,9 @@ public class HttpExchangeTest {
     /*
     @Test
     void multipleHeadersSameName() throws IOException {
-        HttpHandler handler = (context, request) -> {
+        HttpHandler handler = (request)-> {
             String accept = request.getHeaderValue("accept");
-            context.respond().writeString("accept=" + accept);
+            request.respond().writeString("accept=" + accept);
             return true;
         };
 
@@ -408,8 +408,8 @@ public class HttpExchangeTest {
 
     @Test
     void connectionCloseHeader() throws IOException {
-        HttpHandler handler = (context, request) -> {
-            context.respond()
+        HttpHandler handler = (request)-> {
+            request.respond()
                     .setCloseAfter(true)
                     .writeString("bye");
         };
@@ -436,7 +436,7 @@ public class HttpExchangeTest {
 
     @Test
     void badRequestGets400() throws IOException {
-        HttpHandler handler = (context, request) -> {
+        HttpHandler handler = (request)-> {
             throw new IllegalStateException("should not have gotten here");
         };
 

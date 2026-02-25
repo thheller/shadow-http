@@ -8,7 +8,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class WebSocketExchange implements WebSocketContext, Exchange {
+public class WebSocketExchange implements WebSocketConnection, Exchange {
     private static final int MAX_FRAME_SIZE = 1000000;
     // minimum size of message before compression is used
     private static final int COMPRESSION_MIN_SIZE = 256;
