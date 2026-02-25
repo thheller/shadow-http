@@ -10,7 +10,7 @@ import java.time.format.DateTimeFormatter;
 
 /**
  * Serves files from a ClassLoader using a configurable prefix.
- *
+ * <p>
  * Example: prefix "/public" maps the request URI "/foo.txt" to the classpath
  * resource "/public/foo.txt".
  */
@@ -37,7 +37,9 @@ public class ClasspathHandler implements HttpHandler {
         this.classLoader = classLoader;
     }
 
-    /** Convenience: use the context class loader of the calling thread. */
+    /**
+     * Convenience: use the context class loader of the calling thread.
+     */
     public ClasspathHandler(String prefix) {
         this(Thread.currentThread().getContextClassLoader(), prefix);
     }
@@ -54,7 +56,7 @@ public class ClasspathHandler implements HttpHandler {
 
     @Override
     public void handle(HttpRequest request) throws IOException {
-        if (!"GET".equals(request.method)) {
+        if (!"GET".equals(request.method) && !"HEAD".equals(request.method)) {
             return;
         }
 
@@ -102,7 +104,7 @@ public class ClasspathHandler implements HttpHandler {
         long lastModifiedMillis = conn.getLastModified();
         String lastModified = lastModifiedMillis > 0
                 ? LAST_MODIFIED_FORMATTER.format(
-                        new java.util.Date(lastModifiedMillis).toInstant().atZone(GMT))
+                new java.util.Date(lastModifiedMillis).toInstant().atZone(GMT))
                 : null;
 
         if (lastModified != null) {
@@ -140,8 +142,12 @@ public class ClasspathHandler implements HttpHandler {
             response.setHeader("last-modified", lastModified);
         }
 
-        try (InputStream in = new BufferedInputStream(conn.getInputStream(), server.config.outputBufferSize)) {
-            response.writeStream(in);
+        if ("GET".equals(request.method)) {
+            try (InputStream in = new BufferedInputStream(conn.getInputStream(), server.config.outputBufferSize)) {
+                response.writeStream(in);
+            }
+        } else {
+            response.skipBody();
         }
     }
 

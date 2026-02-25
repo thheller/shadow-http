@@ -1,6 +1,7 @@
 package shadow.http.server;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
@@ -10,11 +11,19 @@ import java.util.concurrent.Executors;
 
 public class Server {
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-    final Config config = new Config();
+    final Config config;
 
     private HttpHandler[] handlers = null;
     private ServerSocket socket = null;
     private Thread acceptorThread = null;
+
+    public Server() {
+        this(new Config());
+    }
+
+    public Server(Config config) {
+        this.config = config;
+    }
 
     public void setHandler(HttpHandler handler) {
         setHandlers(handler);
@@ -53,10 +62,28 @@ public class Server {
     }
 
     public void start(int port) throws IOException {
-        socket = new ServerSocket(port);
+       start("0.0.0.0", port) ;
+    }
+
+    public void start(String host, int port) throws IOException {
+        socket = new ServerSocket();
+
+        socket.bind(new InetSocketAddress(host, port));
 
         acceptorThread = new Thread(new Acceptor(this), "shadow.http.server[accept-loop:" + port + "]");
         acceptorThread.start();
+    }
+
+    public ServerSocket getSocket() {
+        return socket;
+    }
+
+    public ExecutorService getExecutor() {
+        return executor;
+    }
+
+    public Config getConfig() {
+        return config;
     }
 
     public void stop() throws IOException, InterruptedException {

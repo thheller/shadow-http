@@ -101,6 +101,14 @@ public class HttpResponse {
         return this;
     }
 
+    public void skipBody() throws IOException {
+        if (state == State.PENDING) {
+            beginResponse();
+        }
+        out.flush();
+        this.state = State.COMPLETE;
+    }
+
     public void writeString(String s) throws IOException {
         writeString(s, true);
     }

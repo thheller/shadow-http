@@ -76,10 +76,8 @@ public class FileHandler implements HttpHandler {
 
     @Override
     public void handle(HttpRequest request) throws IOException {
-
-        // FIXME: HEAD support
         // POST should never serve files right?
-        if (!"GET".equals(request.method)) {
+        if (!"GET".equals(request.method) && !"HEAD".equals(request.method)) {
             return;
         }
 
@@ -151,9 +149,14 @@ public class FileHandler implements HttpHandler {
             response.setHeader("cache-control", "private, no-cache");
             response.setHeader("last-modified", lastModified);
 
-            // using the outputBufferSize since we want to fill that asap, might as well do it all at once
-            try (InputStream in = new BufferedInputStream(Files.newInputStream(fileInfo.path), server.config.outputBufferSize)) {
-                response.writeStream(in);
+            // HEAD requests get headers but not body
+            if ("GET".equals(request.method)) {
+                // using the outputBufferSize since we want to fill that asap, might as well do it all at once
+                try (InputStream in = new BufferedInputStream(Files.newInputStream(fileInfo.path), server.config.outputBufferSize)) {
+                    response.writeStream(in);
+                }
+            } else {
+                response.skipBody();
             }
         }
     }
