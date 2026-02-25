@@ -1,5 +1,6 @@
 (ns shadow.http.server.ring
   (:require
+    [shadow.http.server :as-alias srv]
     [ring.websocket.protocols :as ring-protocols])
   (:import
     [java.io InputStream File]
@@ -152,7 +153,7 @@
     this)
 
   (-close [this code reason]
-    (.sendClose ctx code reason)
+    (.sendClose ctx code)
     this
     ))
 
@@ -174,13 +175,16 @@
 
       (when ring-response
         ;; check for websocket upgrade response
-        (if-let [listener (:ring.websocket/listener ring-response)]
-          ;; websocket upgrade
-          (let [ws-handler (ring-ws-handler listener)]
-            (.upgradeToWebSocket ^HttpContext ctx ws-handler))
+        ;; prefer our own impl over ring impl if present
+        (if-let [^WebSocketHandler handler (::srv/handler ring-response)]
+          (.upgradeToWebSocket ^HttpContext ctx handler)
+          (if-let [listener (:ring.websocket/listener ring-response)]
+            ;; websocket upgrade
+            (let [ws-handler (ring-ws-handler listener)]
+              (.upgradeToWebSocket ^HttpContext ctx ws-handler))
 
-          ;; normal HTTP response
-          (write-ring-response ctx ring-response))))))
+            ;; normal HTTP response
+            (write-ring-response ctx ring-response)))))))
 
 (defn handler [handler-fn]
   (RingHandler. nil handler-fn))
