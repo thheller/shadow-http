@@ -121,19 +121,19 @@
         (RingWebSocketHandler. ws-ctx next-listener)
         next)))
 
-  (onText [this _ payload]
+  (onText [this payload]
     (ring-protocols/on-message listener this payload)
     this)
 
-  (onBinary [this _ payload]
+  (onBinary [this payload]
     (ring-protocols/on-message listener this (ByteBuffer/wrap payload))
     this)
 
-  (onPing [this _ payload]
+  (onPing [this payload]
     (ring-protocols/on-ping listener this (ByteBuffer/wrap payload))
     this)
 
-  (onPong [this _ payload]
+  (onPong [this payload]
     (ring-protocols/on-pong listener this (ByteBuffer/wrap payload))
     this)
 

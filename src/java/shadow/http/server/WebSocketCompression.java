@@ -72,21 +72,22 @@ public class WebSocketCompression {
         }
 
         deflater.setInput(input);
-        deflater.finish();
 
+        // Use SYNC_FLUSH (not finish()) so the deflater remains usable for subsequent
+        // messages.  SYNC_FLUSH produces the 0x00 0x00 0xff 0xff empty stored block at
+        // the end which RFC 7692 Section 7.2.1 requires us to strip.
+        // Calling finish() would write a final DEFLATE block and then require reset()
+        // which destroys the LZ77 sliding-window context needed for context takeover.
         ByteArrayOutputStream baos = new ByteArrayOutputStream(input.length);
         byte[] buf = new byte[BUFFER_SIZE];
 
-        while (!deflater.finished()) {
-            int n = deflater.deflate(buf, 0, buf.length, Deflater.SYNC_FLUSH);
-            baos.write(buf, 0, n);
-        }
-
-        // If serverNoContextTakeover we called reset() already so no context to preserve.
-        // Otherwise reset only the "finished" state so the context is kept.
-        if (!serverNoContextTakeover) {
-            deflater.reset();
-        }
+        int n;
+        do {
+            n = deflater.deflate(buf, 0, buf.length, Deflater.SYNC_FLUSH);
+            if (n > 0) {
+                baos.write(buf, 0, n);
+            }
+        } while (n > 0);
 
         byte[] compressed = baos.toByteArray();
 

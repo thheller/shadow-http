@@ -71,11 +71,11 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
                         int code = frame.getCloseStatusCode() == 1005 ? 1000 : frame.getCloseStatusCode();
                         closeReason = frame.getCloseReason();
                         sendClose(code);
-                    }
                     } else if (frame.isPing()) {
                         this.handler = handler.onPing(frame.payload);
                     } else if (frame.isPong()) {
                         this.handler = handler.onPong(frame.payload);
+                    }
                 } else if (!frame.isContinuation() && frame.isFin()) {
                     // Simple unfragmented data frame
                     byte[] payload = frame.payload;
@@ -195,17 +195,16 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
 
         out.write(b0);
 
-        long len = payload.length;
-        if (len <= 125) {
-            out.write((int) len);
-        } else if (len <= 0xFFFF) {
+        if (length <= 125) {
+            out.write(length);
+        } else if (length <= 0xFFFF) {
             out.write(126);
-            out.write((int) ((len >> 8) & 0xFF));
-            out.write((int) (len & 0xFF));
+            out.write(((length >> 8) & 0xFF));
+            out.write((length & 0xFF));
         } else {
             out.write(127);
             for (int i = 7; i >= 0; i--) {
-                out.write((int) ((len >> (8 * i)) & 0xFF));
+                out.write(((length >> (8 * i)) & 0xFF));
             }
         }
 
