@@ -24,7 +24,7 @@ public class TestServer {
                         .setContentType("text/event-stream")
                         .setChunked(true)
                         .setBody(true)
-                        .setCompress(false); // doesn't work currently. needs forced gzip flush.
+                        .setCompress(true);
 
                 while (true) {
                     response.writeString("data: " + System.currentTimeMillis() + "\n\n", false);
