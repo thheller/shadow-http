@@ -180,11 +180,11 @@ public class WebSocketExchangeTest {
     void serverSendTextReachesClient() throws IOException {
         // Handler echoes whatever text it receives back to the client, then
         // sends a close frame so the exchange loop terminates cleanly.
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(WebSocketContext ctx, String text) throws IOException {
-                ctx.sendText("echo: " + text);
-                ctx.sendClose(1000);
+            public WebSocketHandler onText(String text) throws IOException {
+                context.sendText("echo: " + text);
+                context.sendClose(1000);
                 return this;
             }
         };
@@ -213,7 +213,7 @@ public class WebSocketExchangeTest {
     void clientCloseFrameEchoedBack() throws IOException {
         // A handler that does nothing; the client sends a close frame and we
         // verify the server echoes back a close frame with an appropriate code.
-        WebSocketHandler handler = new WebSocketHandler() {};
+        WebSocketHandler handler = new WebSocketHandler.Base();
 
         ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
         writeClientCloseFrame(clientFrames, 1000);
@@ -234,7 +234,7 @@ public class WebSocketExchangeTest {
         int[] receivedCode = {-1};
         String[] receivedReason = {null};
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
             public void onClose(int statusCode, String reason) {
                 receivedCode[0] = statusCode;
@@ -255,9 +255,9 @@ public class WebSocketExchangeTest {
     void multipleTextMessages() throws IOException {
         List<String> received = new ArrayList<>();
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(WebSocketContext ctx, String text) throws IOException {
+            public WebSocketHandler onText(String text) throws IOException {
                 received.add(text);
                 return this;
             }
@@ -278,9 +278,9 @@ public class WebSocketExchangeTest {
     void binaryMessageDelivered() throws IOException {
         byte[][] receivedPayload = {null};
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onBinary(WebSocketContext ctx, byte[] payload) {
+            public WebSocketHandler onBinary(byte[] payload) {
                 receivedPayload[0] = payload;
                 return this;
             }
@@ -301,9 +301,9 @@ public class WebSocketExchangeTest {
     void fragmentedTextMessage() throws IOException {
         List<String> received = new ArrayList<>();
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(WebSocketContext ctx, String text) {
+            public WebSocketHandler onText(String text) {
                 received.add(text);
                 return this;
             }
@@ -343,29 +343,22 @@ public class WebSocketExchangeTest {
 
     @Test
     void startHandlerIsInvoked() throws IOException {
-        boolean[] started = {false};
 
-        WebSocketHandler handler = new WebSocketHandler() {
-            @Override
-            public WebSocketHandler start(WebSocketContext ctx) {
-                started[0] = true;
-                return this;
-            }
-        };
+        WebSocketHandler.Base handler = new WebSocketHandler.Base();
 
         ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
         writeClientCloseFrame(clientFrames, 1000);
 
         run(handler, clientFrames.toByteArray());
 
-        assertTrue(started[0], "start() must be called before any message processing");
+        assertNotNull(handler.context, "start() must be called before any message processing");
     }
 
     @Test
     void onCloseCalledEvenOnAbnormalEOF() throws IOException {
         int[] receivedCode = {-1};
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
             public void onClose(int statusCode, String reason) {
                 receivedCode[0] = statusCode;
@@ -383,7 +376,7 @@ public class WebSocketExchangeTest {
         int[] receivedCode = {-1};
         String[] receivedReason = {null};
 
-        WebSocketHandler handler = new WebSocketHandler() {
+        WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
             public void onClose(int statusCode, String reason) {
                 receivedCode[0] = statusCode;

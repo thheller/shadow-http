@@ -7,23 +7,58 @@ public interface WebSocketHandler {
     default WebSocketHandler start(WebSocketContext ctx) {
         return this;
     }
-    default WebSocketHandler onText(WebSocketContext ctx, String payload) throws IOException {
+    default WebSocketHandler onText(String payload) throws IOException {
         return this;
     }
 
-    default WebSocketHandler onBinary(WebSocketContext ctx, byte[] payload) throws IOException {
+    default WebSocketHandler onBinary(byte[] payload) throws IOException {
         return this;
     }
 
-    default WebSocketHandler onPing(WebSocketContext ctx, byte[] payload) throws IOException {
-        ctx.sendPong(payload);
-        return this;
-    }
+    WebSocketHandler onPing(byte[] payload) throws IOException;
 
-    default WebSocketHandler onPong(WebSocketContext ctx, byte[] payload) throws IOException {
+    default WebSocketHandler onPong(byte[] payload) throws IOException {
         return this;
     }
 
     default void onClose(int statusCode, String reason) {
+    }
+
+    class Base implements WebSocketHandler {
+        protected WebSocketContext context;
+
+        public Base() {
+        }
+
+        @Override
+        public WebSocketHandler start(WebSocketContext ctx) {
+            this.context = ctx;
+            return this;
+        }
+
+        @Override
+        public WebSocketHandler onText(String payload) throws IOException {
+            return this;
+        }
+
+        @Override
+        public WebSocketHandler onBinary(byte[] payload) throws IOException {
+            return this;
+        }
+
+        @Override
+        public WebSocketHandler onPing(byte[] payload) throws IOException {
+            context.sendPong(payload);
+            return this;
+        }
+
+        @Override
+        public WebSocketHandler onPong(byte[] payload) throws IOException {
+            return this;
+        }
+
+        @Override
+        public void onClose(int statusCode, String reason) {
+        }
     }
 }

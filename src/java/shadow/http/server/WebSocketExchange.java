@@ -73,9 +73,9 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
                         sendClose(code);
                     }
                     } else if (frame.isPing()) {
-                        this.handler = handler.onPing(this, frame.payload);
+                        this.handler = handler.onPing(frame.payload);
                     } else if (frame.isPong()) {
-                        this.handler = handler.onPong(this, frame.payload);
+                        this.handler = handler.onPong(frame.payload);
                 } else if (!frame.isContinuation() && frame.isFin()) {
                     // Simple unfragmented data frame
                     byte[] payload = frame.payload;
@@ -131,9 +131,9 @@ public class WebSocketExchange implements WebSocketContext, Exchange {
 
     private void dispatchMessage(int opcode, byte[] payload) throws IOException {
         if (opcode == WebSocketFrame.OPCODE_TEXT) {
-            this.handler = handler.onText(this, new String(payload, StandardCharsets.UTF_8));
+            this.handler = handler.onText(new String(payload, StandardCharsets.UTF_8));
         } else if (opcode == WebSocketFrame.OPCODE_BINARY) {
-            this.handler = handler.onBinary(this, payload);
+            this.handler = handler.onBinary(payload);
         }
     }
 

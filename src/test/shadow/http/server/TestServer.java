@@ -10,10 +10,10 @@ public class TestServer {
             if (request.target.equals("/")) {
                 ctx.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
             } else if (request.target.equals("/ws")) {
-                ctx.upgradeToWebSocket(new WebSocketHandler() {
+                ctx.upgradeToWebSocket(new WebSocketHandler.Base() {
                     @Override
-                    public WebSocketHandler onText(WebSocketContext ctx, String payload) throws IOException {
-                        ctx.sendText(payload);
+                    public WebSocketHandler onText(String payload) throws IOException {
+                        context.sendText(payload);
                         return this;
                     }
                 });
