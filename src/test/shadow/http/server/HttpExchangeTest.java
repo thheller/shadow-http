@@ -373,4 +373,25 @@ public class HttpExchangeTest {
                 "\r\n" +
                 "bye", result);
     }
+
+    @Test
+    void badRequestGets400() throws IOException {
+        HttpHandler handler = (context, request) -> {
+            throw new IllegalStateException("should not have gotten here");
+        };
+
+        // request missing Host header
+        String noHost =
+                "GET / HTTP/1.1\r\n" +
+                        "\r\n";
+
+        String result = run(handler, noHost);
+
+        assertEquals("HTTP/1.1 400 \r\n" +
+                "content-type: text/plain\r\n" +
+                "content-length: 54\r\n" +
+                "connection: close\r\n" +
+                "\r\n" +
+                "Missing required Host header field in HTTP/1.1 request", result);
+    }
 }

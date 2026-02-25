@@ -204,7 +204,7 @@ public class HttpResponse {
             writeHeader("content-length", Long.toString(contentLength));
         }
 
-        if ("close".equals(exchange.request.getHeaderValue("connection"))) {
+        if (!closeAfter && "close".equals(exchange.request.getHeaderValue("connection"))) {
             closeAfter = true;
         }
 
