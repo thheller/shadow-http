@@ -41,6 +41,10 @@ public class HttpExchange implements Exchange, HttpContext {
     }
 
     public void upgradeToWebSocket(WebSocketHandler handler) throws IOException {
+        upgradeToWebSocket(handler, null);
+    }
+
+    public void upgradeToWebSocket(WebSocketHandler handler, String subProtocol) throws IOException {
         // Validate required headers per RFC 6455 Section 4.2.1
         String upgrade = request.getHeaderValue("upgrade");
         if (upgrade == null || !upgrade.equalsIgnoreCase("websocket")) {
@@ -78,6 +82,11 @@ public class HttpExchange implements Exchange, HttpContext {
 
             if (pmd != null) {
                 upgradeResponse.setHeader("sec-websocket-extensions", pmd.buildResponseHeaderValue());
+            }
+
+            // Set Sec-WebSocket-Protocol if a subprotocol was selected per RFC 6455 Section 4.2.2 step 5
+            if (subProtocol != null && !subProtocol.isEmpty()) {
+                upgradeResponse.setHeader("sec-websocket-protocol", subProtocol);
             }
 
             upgradeResponse.noContent();

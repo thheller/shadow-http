@@ -3,6 +3,7 @@ package shadow.http.server;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -102,6 +103,8 @@ public class Server {
                     Socket socket = server.socket.accept();
                     server.executor.execute(new SocketConnection(server, socket));
                 }
+            } catch (SocketException e) {
+                // ignore, most likely closed
             } catch (IOException e)  {
                 e.printStackTrace();
             }

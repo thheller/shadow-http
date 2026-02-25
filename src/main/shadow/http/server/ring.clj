@@ -182,11 +182,12 @@
         ;; check for websocket upgrade response
         ;; prefer our own impl over ring impl if present
         (if-let [^WebSocketHandler handler (::srv/handler ring-response)]
-          (.upgradeToWebSocket ^HttpContext ctx handler)
+          (.upgradeToWebSocket ^HttpContext ctx handler (::srv/protocol ring-response))
           (if-let [listener (:ring.websocket/listener ring-response)]
             ;; websocket upgrade
-            (let [ws-handler (ring-ws-handler listener)]
-              (.upgradeToWebSocket ^HttpContext ctx ws-handler))
+            (let [ws-handler (ring-ws-handler listener)
+                  sub-protocol (:ring.websocket/protocol ring-response)]
+              (.upgradeToWebSocket ^HttpContext ctx ws-handler sub-protocol))
 
             ;; normal HTTP response
             (write-ring-response ctx ring-response)))))))
