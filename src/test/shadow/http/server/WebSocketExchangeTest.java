@@ -371,7 +371,7 @@ public class WebSocketExchangeTest {
      * Runs a WebSocketExchange with the given handler and optional compression
      * against the provided client-frame bytes.
      */
-    static byte[] run(WebSocketHandler handler, byte[] clientFrames, WebSocketCompression compression) throws IOException {
+    static byte[] run(WebSocketHandler handler, byte[] clientFrames, PerMessageDeflate compression) throws IOException {
         Server server = new Server();
 
         ByteArrayOutputStream serverOut = new ByteArrayOutputStream();
@@ -420,7 +420,7 @@ public class WebSocketExchangeTest {
     /**
      * Writes a masked, compressed client text frame (RSV1=1).
      */
-    static void writeClientCompressedTextFrame(OutputStream out, WebSocketCompression compression, String text) throws IOException {
+    static void writeClientCompressedTextFrame(OutputStream out, PerMessageDeflate compression, String text) throws IOException {
         byte[] compressed = compression.compress(text.getBytes(StandardCharsets.UTF_8));
         writeClientFrame(out, true, true, WebSocketFrame.OPCODE_TEXT, compressed);
     }
@@ -437,7 +437,7 @@ public class WebSocketExchangeTest {
      */
     @Test
     void compressDecompressMultipleMessagesWithContextTakeover() throws IOException {
-        WebSocketCompression compression = new WebSocketCompression(false, false);
+        PerMessageDeflate compression = new PerMessageDeflate(false, false);
 
         String msg1 = "a]".repeat(200); // > COMPRESSION_MIN_SIZE (256)
         String msg2 = "b[".repeat(200);
@@ -449,7 +449,7 @@ public class WebSocketExchangeTest {
 
         // Each compressed payload must be valid and decompress back to the original.
         // Use a separate decompressor with context takeover to mirror the server side.
-        WebSocketCompression decompressor = new WebSocketCompression(false, false);
+        PerMessageDeflate decompressor = new PerMessageDeflate(false, false);
 
         assertEquals(msg1, new String(decompressor.decompress(c1), StandardCharsets.UTF_8));
         assertEquals(msg2, new String(decompressor.decompress(c2), StandardCharsets.UTF_8));
@@ -462,7 +462,7 @@ public class WebSocketExchangeTest {
      */
     @Test
     void compressDecompressMultipleMessagesWithoutContextTakeover() throws IOException {
-        WebSocketCompression compression = new WebSocketCompression(true, true);
+        PerMessageDeflate compression = new PerMessageDeflate(true, true);
 
         String msg1 = "x!".repeat(200);
         String msg2 = "y@".repeat(200);
@@ -472,8 +472,8 @@ public class WebSocketExchangeTest {
 
         // Without context takeover, each message is independent – a fresh
         // decompressor should be able to decompress each one.
-        WebSocketCompression d1 = new WebSocketCompression(true, true);
-        WebSocketCompression d2 = new WebSocketCompression(true, true);
+        PerMessageDeflate d1 = new PerMessageDeflate(true, true);
+        PerMessageDeflate d2 = new PerMessageDeflate(true, true);
 
         assertEquals(msg1, new String(d1.decompress(c1), StandardCharsets.UTF_8));
         assertEquals(msg2, new String(d2.decompress(c2), StandardCharsets.UTF_8));
@@ -489,11 +489,11 @@ public class WebSocketExchangeTest {
     void compressedEchoMultipleMessages() throws IOException {
         // Both sides share parameters; the server compresses outbound, the client
         // (simulated by the test) compresses inbound frames.
-        try (WebSocketCompression serverCompression = new WebSocketCompression(false, false)) {
+        try (PerMessageDeflate serverCompression = new PerMessageDeflate(false, false)) {
 
             // Separate instance for the "client" side (compressing frames we send,
             // decompressing frames the server sends back).
-            try (WebSocketCompression clientCompression = new WebSocketCompression(false, false)) {
+            try (PerMessageDeflate clientCompression = new PerMessageDeflate(false, false)) {
 
                 // These messages must exceed COMPRESSION_MIN_SIZE (256 bytes).
                 String msg1 = "Hello WebSocket! ".repeat(20);  // 340 chars
@@ -531,7 +531,7 @@ public class WebSocketExchangeTest {
                 assertTrue(f1.fin);
                 // Decompress server's response — need a fresh decompressor matching the
                 // server's compressor context.
-                WebSocketCompression responseDecompressor = new WebSocketCompression(false, false);
+                PerMessageDeflate responseDecompressor = new PerMessageDeflate(false, false);
                 String echo1 = new String(responseDecompressor.decompress(f1.payload), StandardCharsets.UTF_8);
                 assertEquals(msg1, echo1);
 
@@ -557,7 +557,7 @@ public class WebSocketExchangeTest {
      */
     @Test
     void smallMessageNotCompressedWhenBelowThreshold() throws IOException {
-        try (WebSocketCompression serverCompression = new WebSocketCompression(false, false)) {
+        try (PerMessageDeflate serverCompression = new PerMessageDeflate(false, false)) {
 
             String smallMsg = "tiny"; // well below 256 bytes
 

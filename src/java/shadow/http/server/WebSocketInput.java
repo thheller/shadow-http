@@ -25,15 +25,15 @@ public class WebSocketInput {
      * When non-null, RSV1 on the first frame of a message is accepted as the
      * "Per-Message Compressed" bit defined in RFC 7692 Section 6.
      */
-    private final WebSocketCompression webSocketCompression;
+    private final PerMessageDeflate perMessageDeflate;
 
     public WebSocketInput(InputStream in) {
         this(in, null);
     }
 
-    public WebSocketInput(InputStream in, WebSocketCompression webSocketCompression) {
+    public WebSocketInput(InputStream in, PerMessageDeflate perMessageDeflate) {
         this.in = in;
-        this.webSocketCompression = webSocketCompression;
+        this.perMessageDeflate = perMessageDeflate;
     }
 
     /**
@@ -82,7 +82,7 @@ public class WebSocketInput {
         // that defines meanings for non-zero values.
         // RFC 7692 Section 6: RSV1 is the "Per-Message Compressed" bit when
         // permessage-deflate is negotiated.  RSV2 and RSV3 remain reserved.
-        boolean rsv1Allowed = (webSocketCompression != null) && !isControlOpcode(opcode);
+        boolean rsv1Allowed = (perMessageDeflate != null) && !isControlOpcode(opcode);
         if ((rsv1 && !rsv1Allowed) || rsv2 || rsv3) {
             throw new WebSocketProtocolException(
                     1002, "Reserved bits set without negotiated extension: RSV1=" + rsv1 + " RSV2=" + rsv2 + " RSV3=" + rsv3);

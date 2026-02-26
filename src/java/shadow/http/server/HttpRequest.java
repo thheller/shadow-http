@@ -114,7 +114,7 @@ public class HttpRequest {
 
             // Attempt to negotiate permessage-deflate per RFC 7692 Section 5
             String extensionsHeader = getHeaderValue("sec-websocket-extensions");
-            WebSocketCompression pmd = WebSocketCompression.negotiate(extensionsHeader);
+            PerMessageDeflate pmd = PerMessageDeflate.negotiate(extensionsHeader);
 
             HttpResponse upgradeResponse = respond().setStatus(101)
                     .setHeader("connection", "Upgrade")

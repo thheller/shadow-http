@@ -22,7 +22,7 @@ import java.util.zip.Inflater;
  *   <li>Inflate using raw DEFLATE.</li>
  * </ol>
  */
-public class WebSocketCompression implements AutoCloseable {
+public class PerMessageDeflate implements AutoCloseable {
 
     private static final byte[] DEFLATE_TAIL = {0x00, 0x00, (byte) 0xff, (byte) 0xff};
 
@@ -40,8 +40,8 @@ public class WebSocketCompression implements AutoCloseable {
 
     private static final int BUFFER_SIZE = 8192;
 
-    public WebSocketCompression(boolean serverNoContextTakeover,
-                                boolean clientNoContextTakeover) {
+    public PerMessageDeflate(boolean serverNoContextTakeover,
+                             boolean clientNoContextTakeover) {
         this.serverNoContextTakeover = serverNoContextTakeover;
         this.clientNoContextTakeover = clientNoContextTakeover;
 
@@ -148,9 +148,9 @@ public class WebSocketCompression implements AutoCloseable {
      * caller can include the agreed parameters in the server's opening-handshake response.
      *
      * @param headerValue the raw value of the client's Sec-WebSocket-Extensions header
-     * @return a configured {@code WebSocketCompression}, or {@code null}
+     * @return a configured {@code PerMessageDeflate}, or {@code null}
      */
-    public static WebSocketCompression negotiate(String headerValue) {
+    public static PerMessageDeflate negotiate(String headerValue) {
         if (headerValue == null || headerValue.isEmpty()) {
             return null;
         }
@@ -234,8 +234,8 @@ public class WebSocketCompression implements AutoCloseable {
                 continue; // try next offer
             }
 
-            // Build and return the agreed WebSocketCompression instance
-            return new WebSocketCompression(serverNoCtx, clientNoCtx);
+            // Build and return the agreed PerMessageDeflate instance
+            return new PerMessageDeflate(serverNoCtx, clientNoCtx);
         }
 
         return null;

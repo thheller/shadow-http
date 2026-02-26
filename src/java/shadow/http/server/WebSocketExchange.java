@@ -26,19 +26,19 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
     /**
      * Optional permessage-deflate context. Null when compression is not negotiated.
      */
-    final WebSocketCompression wsCompression;
+    final PerMessageDeflate perMessageDeflate;
 
     boolean wasClosed = false;
     int closeStatusCode = 1006; // 1006 = abnormal closure (no close frame received)
     String closeReason = "";
 
-    public WebSocketExchange(Connection connection, WebSocketHandler handler, WebSocketCompression webSocketCompression) throws IOException {
+    public WebSocketExchange(Connection connection, WebSocketHandler handler, PerMessageDeflate perMessageDeflate) throws IOException {
         this.connection = connection;
         this.handler = handler;
         this.in = connection.getInputStream();
         this.out = connection.getOutputStream();
-        this.wsIn = new WebSocketInput(this.in, webSocketCompression);
-        this.wsCompression = webSocketCompression;
+        this.wsIn = new WebSocketInput(this.in, perMessageDeflate);
+        this.perMessageDeflate = perMessageDeflate;
     }
 
     @Override
@@ -79,15 +79,15 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
                 } else if (!frame.isContinuation() && frame.isFin()) {
                     // Simple unfragmented data frame
                     byte[] payload = frame.payload;
-                    if (wsCompression != null && frame.rsv1) {
+                    if (perMessageDeflate != null && frame.rsv1) {
                         // Per-message compressed – decompress the payload (RFC 7692 Section 6.2)
-                        payload = wsCompression.decompress(frame.payload);
+                        payload = perMessageDeflate.decompress(frame.payload);
                     }
                     dispatchMessage(frame.opcode, payload);
                 } else if (!frame.isContinuation() && !frame.isFin()) {
                     // First fragment of a fragmented message
                     inFragmentedMessage = true;
-                    fragmentedCompressed = wsCompression != null && frame.rsv1;
+                    fragmentedCompressed = perMessageDeflate != null && frame.rsv1;
                     fragmentedOpcode = frame.opcode;
                     fragmentBuffer = new ByteArrayOutputStream();
                     fragmentBuffer.write(frame.payload);
@@ -102,7 +102,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
                         // Last fragment – assemble and optionally decompress
                         byte[] assembled = fragmentBuffer.toByteArray();
                         if (fragmentedCompressed) {
-                            assembled = wsCompression.decompress(assembled);
+                            assembled = perMessageDeflate.decompress(assembled);
                         }
                         int opcode = fragmentedOpcode;
                         inFragmentedMessage = false;
@@ -125,8 +125,8 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (wsCompression != null) {
-                wsCompression.close();
+            if (perMessageDeflate != null) {
+                perMessageDeflate.close();
             }
         }
 
@@ -163,12 +163,12 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
         // Only compress when compression was negotiated AND the payload is large enough
         // to benefit.  RFC 7692 Section 6.1 explicitly allows skipping compression for
         // any individual message (RSV1=0); small messages typically expand under deflate.
-        boolean rsv1 = wsCompression != null && bytes.length >= COMPRESSION_MIN_SIZE;
+        boolean rsv1 = perMessageDeflate != null && bytes.length >= COMPRESSION_MIN_SIZE;
 
         if (rsv1) {
             // Compress the whole message payload (RFC 7692 Section 7.2.1), then send as
             // frame(s) with RSV1=1 on the first frame only (the "Per-Message Compressed" bit).
-            bytes = wsCompression.compress(bytes);
+            bytes = perMessageDeflate.compress(bytes);
         }
 
         int length = bytes.length;
