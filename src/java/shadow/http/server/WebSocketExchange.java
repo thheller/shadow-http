@@ -122,8 +122,6 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             // ignore
         } catch (IOException e) {
             // ignore
-        } catch (InterruptedException e) {
-            // ignore
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
