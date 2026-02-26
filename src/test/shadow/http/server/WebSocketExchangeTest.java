@@ -76,17 +76,23 @@ public class WebSocketExchangeTest {
         out.write(masked);
     }
 
-    /** Convenience: write a masked text frame. */
+    /**
+     * Convenience: write a masked text frame.
+     */
     static void writeClientTextFrame(OutputStream out, String text) throws IOException {
         writeClientFrame(out, true, WebSocketFrame.OPCODE_TEXT, text.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Convenience: write a masked binary frame. */
+    /**
+     * Convenience: write a masked binary frame.
+     */
     static void writeClientBinaryFrame(OutputStream out, byte[] data) throws IOException {
         writeClientFrame(out, true, WebSocketFrame.OPCODE_BINARY, data);
     }
 
-    /** Convenience: write a masked close frame with a 2-byte status code. */
+    /**
+     * Convenience: write a masked close frame with a 2-byte status code.
+     */
     static void writeClientCloseFrame(OutputStream out, int statusCode) throws IOException {
         byte[] payload = {(byte) ((statusCode >> 8) & 0xFF), (byte) (statusCode & 0xFF)};
         writeClientFrame(out, true, WebSocketFrame.OPCODE_CLOSE, payload);
@@ -96,8 +102,8 @@ public class WebSocketExchangeTest {
      * Runs a WebSocketExchange with the given handler against the provided
      * client-frame bytes.
      *
-     * @param handler       the server-side WebSocket handler
-     * @param clientFrames  raw bytes of one or more masked client frames
+     * @param handler      the server-side WebSocket handler
+     * @param clientFrames raw bytes of one or more masked client frames
      * @return the raw bytes that the server wrote to the output stream
      */
     static byte[] run(WebSocketHandler handler, byte[] clientFrames) throws IOException {
@@ -411,7 +417,9 @@ public class WebSocketExchangeTest {
         out.write(masked);
     }
 
-    /** Writes a masked, compressed client text frame (RSV1=1). */
+    /**
+     * Writes a masked, compressed client text frame (RSV1=1).
+     */
     static void writeClientCompressedTextFrame(OutputStream out, WebSocketCompression compression, String text) throws IOException {
         byte[] compressed = compression.compress(text.getBytes(StandardCharsets.UTF_8));
         writeClientFrame(out, true, true, WebSocketFrame.OPCODE_TEXT, compressed);
@@ -429,7 +437,7 @@ public class WebSocketExchangeTest {
      */
     @Test
     void compressDecompressMultipleMessagesWithContextTakeover() throws IOException {
-        WebSocketCompression compression = new WebSocketCompression(false, false, 15, 15);
+        WebSocketCompression compression = new WebSocketCompression(false, false);
 
         String msg1 = "a]".repeat(200); // > COMPRESSION_MIN_SIZE (256)
         String msg2 = "b[".repeat(200);
@@ -441,7 +449,7 @@ public class WebSocketExchangeTest {
 
         // Each compressed payload must be valid and decompress back to the original.
         // Use a separate decompressor with context takeover to mirror the server side.
-        WebSocketCompression decompressor = new WebSocketCompression(false, false, 15, 15);
+        WebSocketCompression decompressor = new WebSocketCompression(false, false);
 
         assertEquals(msg1, new String(decompressor.decompress(c1), StandardCharsets.UTF_8));
         assertEquals(msg2, new String(decompressor.decompress(c2), StandardCharsets.UTF_8));
@@ -454,7 +462,7 @@ public class WebSocketExchangeTest {
      */
     @Test
     void compressDecompressMultipleMessagesWithoutContextTakeover() throws IOException {
-        WebSocketCompression compression = new WebSocketCompression(true, true, 15, 15);
+        WebSocketCompression compression = new WebSocketCompression(true, true);
 
         String msg1 = "x!".repeat(200);
         String msg2 = "y@".repeat(200);
@@ -464,8 +472,8 @@ public class WebSocketExchangeTest {
 
         // Without context takeover, each message is independent – a fresh
         // decompressor should be able to decompress each one.
-        WebSocketCompression d1 = new WebSocketCompression(true, true, 15, 15);
-        WebSocketCompression d2 = new WebSocketCompression(true, true, 15, 15);
+        WebSocketCompression d1 = new WebSocketCompression(true, true);
+        WebSocketCompression d2 = new WebSocketCompression(true, true);
 
         assertEquals(msg1, new String(d1.decompress(c1), StandardCharsets.UTF_8));
         assertEquals(msg2, new String(d2.decompress(c2), StandardCharsets.UTF_8));
@@ -481,63 +489,66 @@ public class WebSocketExchangeTest {
     void compressedEchoMultipleMessages() throws IOException {
         // Both sides share parameters; the server compresses outbound, the client
         // (simulated by the test) compresses inbound frames.
-        WebSocketCompression serverCompression = new WebSocketCompression(false, false, 15, 15);
+        try (WebSocketCompression serverCompression = new WebSocketCompression(false, false)) {
 
-        // Separate instance for the "client" side (compressing frames we send,
-        // decompressing frames the server sends back).
-        WebSocketCompression clientCompression = new WebSocketCompression(false, false, 15, 15);
+            // Separate instance for the "client" side (compressing frames we send,
+            // decompressing frames the server sends back).
+            try (WebSocketCompression clientCompression = new WebSocketCompression(false, false)) {
 
-        // These messages must exceed COMPRESSION_MIN_SIZE (256 bytes).
-        String msg1 = "Hello WebSocket! ".repeat(20);  // 340 chars
-        String msg2 = "Second message!! ".repeat(20);   // 340 chars
+                // These messages must exceed COMPRESSION_MIN_SIZE (256 bytes).
+                String msg1 = "Hello WebSocket! ".repeat(20);  // 340 chars
+                String msg2 = "Second message!! ".repeat(20);   // 340 chars
 
-        assertTrue(msg1.getBytes(StandardCharsets.UTF_8).length >= 256,
-                "msg1 must exceed COMPRESSION_MIN_SIZE");
-        assertTrue(msg2.getBytes(StandardCharsets.UTF_8).length >= 256,
-                "msg2 must exceed COMPRESSION_MIN_SIZE");
+                assertTrue(msg1.getBytes(StandardCharsets.UTF_8).length >= 256,
+                        "msg1 must exceed COMPRESSION_MIN_SIZE");
+                assertTrue(msg2.getBytes(StandardCharsets.UTF_8).length >= 256,
+                        "msg2 must exceed COMPRESSION_MIN_SIZE");
 
-        WebSocketHandler handler = new WebSocketHandler.Base() {
-            @Override
-            public WebSocketHandler onText(String text) throws IOException {
-                context.sendText(text);
-                return this;
+                WebSocketHandler handler = new WebSocketHandler.Base() {
+                    @Override
+                    public WebSocketHandler onText(String text) throws IOException {
+                        context.sendText(text);
+                        return this;
+                    }
+                };
+
+                ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
+                writeClientCompressedTextFrame(clientFrames, clientCompression, msg1);
+                writeClientCompressedTextFrame(clientFrames, clientCompression, msg2);
+                writeClientCloseFrame(clientFrames, 1000);
+
+                byte[] serverOutput = run(handler, clientFrames.toByteArray(), serverCompression);
+                List<WebSocketFrame> frames = parseServerFrames(serverOutput);
+
+                // Expect: compressed text frame 1, compressed text frame 2, close frame
+                assertTrue(frames.size() >= 3,
+                        "Expected 2 text frames + close, got " + frames.size());
+
+                // Frame 1: compressed echo of msg1
+                WebSocketFrame f1 = frames.get(0);
+                assertEquals(WebSocketFrame.OPCODE_TEXT, f1.opcode);
+                assertTrue(f1.rsv1, "First echo frame should have RSV1 set (compressed)");
+                assertTrue(f1.fin);
+                // Decompress server's response — need a fresh decompressor matching the
+                // server's compressor context.
+                WebSocketCompression responseDecompressor = new WebSocketCompression(false, false);
+                String echo1 = new String(responseDecompressor.decompress(f1.payload), StandardCharsets.UTF_8);
+                assertEquals(msg1, echo1);
+
+                // Frame 2: compressed echo of msg2
+                WebSocketFrame f2 = frames.get(1);
+                assertEquals(WebSocketFrame.OPCODE_TEXT, f2.opcode);
+                assertTrue(f2.rsv1, "Second echo frame should have RSV1 set (compressed)");
+                assertTrue(f2.fin);
+                String echo2 = new String(responseDecompressor.decompress(f2.payload), StandardCharsets.UTF_8);
+                assertEquals(msg2, echo2);
+
+                // Last frame: close
+                WebSocketFrame closeFrame = frames.get(frames.size() - 1);
+                assertEquals(WebSocketFrame.OPCODE_CLOSE, closeFrame.opcode);
+
             }
-        };
-
-        ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
-        writeClientCompressedTextFrame(clientFrames, clientCompression, msg1);
-        writeClientCompressedTextFrame(clientFrames, clientCompression, msg2);
-        writeClientCloseFrame(clientFrames, 1000);
-
-        byte[] serverOutput = run(handler, clientFrames.toByteArray(), serverCompression);
-        List<WebSocketFrame> frames = parseServerFrames(serverOutput);
-
-        // Expect: compressed text frame 1, compressed text frame 2, close frame
-        assertTrue(frames.size() >= 3,
-                "Expected 2 text frames + close, got " + frames.size());
-
-        // Frame 1: compressed echo of msg1
-        WebSocketFrame f1 = frames.get(0);
-        assertEquals(WebSocketFrame.OPCODE_TEXT, f1.opcode);
-        assertTrue(f1.rsv1, "First echo frame should have RSV1 set (compressed)");
-        assertTrue(f1.fin);
-        // Decompress server's response — need a fresh decompressor matching the
-        // server's compressor context.
-        WebSocketCompression responseDecompressor = new WebSocketCompression(false, false, 15, 15);
-        String echo1 = new String(responseDecompressor.decompress(f1.payload), StandardCharsets.UTF_8);
-        assertEquals(msg1, echo1);
-
-        // Frame 2: compressed echo of msg2
-        WebSocketFrame f2 = frames.get(1);
-        assertEquals(WebSocketFrame.OPCODE_TEXT, f2.opcode);
-        assertTrue(f2.rsv1, "Second echo frame should have RSV1 set (compressed)");
-        assertTrue(f2.fin);
-        String echo2 = new String(responseDecompressor.decompress(f2.payload), StandardCharsets.UTF_8);
-        assertEquals(msg2, echo2);
-
-        // Last frame: close
-        WebSocketFrame closeFrame = frames.get(frames.size() - 1);
-        assertEquals(WebSocketFrame.OPCODE_CLOSE, closeFrame.opcode);
+        }
     }
 
     /**
@@ -546,31 +557,32 @@ public class WebSocketExchangeTest {
      */
     @Test
     void smallMessageNotCompressedWhenBelowThreshold() throws IOException {
-        WebSocketCompression serverCompression = new WebSocketCompression(false, false, 15, 15);
+        try (WebSocketCompression serverCompression = new WebSocketCompression(false, false)) {
 
-        String smallMsg = "tiny"; // well below 256 bytes
+            String smallMsg = "tiny"; // well below 256 bytes
 
-        WebSocketHandler handler = new WebSocketHandler.Base() {
-            @Override
-            public WebSocketHandler onText(String text) throws IOException {
-                context.sendText(text);
-                return this;
-            }
-        };
+            WebSocketHandler handler = new WebSocketHandler.Base() {
+                @Override
+                public WebSocketHandler onText(String text) throws IOException {
+                    context.sendText(text);
+                    return this;
+                }
+            };
 
-        ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
-        // Send as uncompressed (RSV1=0) since the client can also choose not to compress
-        writeClientTextFrame(clientFrames, smallMsg);
-        writeClientCloseFrame(clientFrames, 1000);
+            ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
+            // Send as uncompressed (RSV1=0) since the client can also choose not to compress
+            writeClientTextFrame(clientFrames, smallMsg);
+            writeClientCloseFrame(clientFrames, 1000);
 
-        byte[] serverOutput = run(handler, clientFrames.toByteArray(), serverCompression);
-        List<WebSocketFrame> frames = parseServerFrames(serverOutput);
+            byte[] serverOutput = run(handler, clientFrames.toByteArray(), serverCompression);
+            List<WebSocketFrame> frames = parseServerFrames(serverOutput);
 
-        assertTrue(frames.size() >= 2);
-        WebSocketFrame textFrame = frames.get(0);
-        assertEquals(WebSocketFrame.OPCODE_TEXT, textFrame.opcode);
-        assertFalse(textFrame.rsv1, "Small message should NOT have RSV1 set (uncompressed)");
-        assertEquals(smallMsg, textFrame.getText());
+            assertTrue(frames.size() >= 2);
+            WebSocketFrame textFrame = frames.get(0);
+            assertEquals(WebSocketFrame.OPCODE_TEXT, textFrame.opcode);
+            assertFalse(textFrame.rsv1, "Small message should NOT have RSV1 set (uncompressed)");
+            assertEquals(smallMsg, textFrame.getText());
+        }
     }
 
     @Test

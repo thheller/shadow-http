@@ -22,7 +22,7 @@ import java.util.zip.Inflater;
  *   <li>Inflate using raw DEFLATE.</li>
  * </ol>
  */
-public class WebSocketCompression {
+public class WebSocketCompression implements AutoCloseable {
 
     private static final byte[] DEFLATE_TAIL = {0x00, 0x00, (byte) 0xff, (byte) 0xff};
 
@@ -34,12 +34,6 @@ public class WebSocketCompression {
     /** Client does NOT take over LZ77 context between messages (resets inflater each message). */
     public final boolean clientNoContextTakeover;
 
-    /** Server-side LZ77 window bits (8-15, default 15). */
-    public final int serverMaxWindowBits;
-
-    /** Client-side LZ77 window bits (8-15, default 15). */
-    public final int clientMaxWindowBits;
-
     // Raw DEFLATE: pass negative windowBits to Deflater/Inflater
     private final Deflater deflater;
     private final Inflater inflater;
@@ -47,15 +41,13 @@ public class WebSocketCompression {
     private static final int BUFFER_SIZE = 8192;
 
     public WebSocketCompression(boolean serverNoContextTakeover,
-                                boolean clientNoContextTakeover,
-                                int serverMaxWindowBits,
-                                int clientMaxWindowBits) {
+                                boolean clientNoContextTakeover) {
         this.serverNoContextTakeover = serverNoContextTakeover;
         this.clientNoContextTakeover = clientNoContextTakeover;
-        this.serverMaxWindowBits = serverMaxWindowBits;
-        this.clientMaxWindowBits = clientMaxWindowBits;
 
-        // Negative window bits = raw DEFLATE (no zlib header/trailer)
+        // Raw DEFLATE (no zlib header/trailer).
+        // Java's Deflater/Inflater always use a 15-bit window; negotiate() rejects
+        // any offer requesting fewer bits so the agreed value always matches.
         this.deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
         this.inflater = new Inflater(true);
     }
@@ -67,6 +59,10 @@ public class WebSocketCompression {
      * @return compressed payload with the trailing 0x00 0x00 0xff 0xff removed
      */
     public byte[] compress(byte[] input) throws IOException {
+        if (input.length == 0) {
+            return new byte[0];
+        }
+
         if (serverNoContextTakeover) {
             deflater.reset();
         }
@@ -87,7 +83,7 @@ public class WebSocketCompression {
             if (n > 0) {
                 baos.write(buf, 0, n);
             }
-        } while (n > 0);
+        } while (n > 0 || !deflater.needsInput());
 
         byte[] compressed = baos.toByteArray();
 
@@ -152,7 +148,7 @@ public class WebSocketCompression {
      * caller can include the agreed parameters in the server's opening-handshake response.
      *
      * @param headerValue the raw value of the client's Sec-WebSocket-Extensions header
-     * @return a configured {@code PerMessageDeflate}, or {@code null}
+     * @return a configured {@code WebSocketCompression}, or {@code null}
      */
     public static WebSocketCompression negotiate(String headerValue) {
         if (headerValue == null || headerValue.isEmpty()) {
@@ -177,9 +173,6 @@ public class WebSocketCompression {
             // Parse parameters
             boolean serverNoCtx = false;
             boolean clientNoCtx = false;
-            int serverWin = 15;
-            int clientWin = 15;
-            boolean clientMaxWindowBitsPresent = false;
 
             boolean valid = true;
             for (int i = 1; i < parts.length; i++) {
@@ -199,13 +192,14 @@ public class WebSocketCompression {
                         clientNoCtx = true;
                         break;
                     case "server_max_window_bits":
+                        // Java's Deflater/Inflater only support 15-bit windows.
+                        // Accept the parameter only when it requests exactly 15 (or is absent,
+                        // which defaults to 15).  Decline the offer for anything smaller.
                         if (value != null) {
                             try {
                                 int bits = Integer.parseInt(value);
-                                if (bits < 8 || bits > 15) {
+                                if (bits != 15) {
                                     valid = false;
-                                } else {
-                                    serverWin = bits;
                                 }
                             } catch (NumberFormatException e) {
                                 valid = false;
@@ -213,14 +207,12 @@ public class WebSocketCompression {
                         }
                         break;
                     case "client_max_window_bits":
-                        clientMaxWindowBitsPresent = true;
+                        // Same reasoning as server_max_window_bits: only 15 is supported.
                         if (value != null) {
                             try {
                                 int bits = Integer.parseInt(value);
-                                if (bits < 8 || bits > 15) {
+                                if (bits != 15) {
                                     valid = false;
-                                } else {
-                                    clientWin = bits;
                                 }
                             } catch (NumberFormatException e) {
                                 valid = false;
@@ -242,17 +234,13 @@ public class WebSocketCompression {
                 continue; // try next offer
             }
 
-            // Build and return the agreed PerMessageDeflate instance
-            WebSocketCompression pmd = new WebSocketCompression(serverNoCtx, clientNoCtx, serverWin, clientWin);
-            pmd.clientMaxWindowBitsOffered = clientMaxWindowBitsPresent;
-            return pmd;
+            // Build and return the agreed WebSocketCompression instance
+            return new WebSocketCompression(serverNoCtx, clientNoCtx);
         }
 
         return null;
     }
 
-    // Whether client_max_window_bits was present in the offer (affects response header)
-    private boolean clientMaxWindowBitsOffered = false;
 
     /**
      * Builds the "Sec-WebSocket-Extensions" response header value for this negotiated
@@ -267,15 +255,18 @@ public class WebSocketCompression {
         if (clientNoContextTakeover) {
             sb.append("; client_no_context_takeover");
         }
-        if (serverMaxWindowBits != 15) {
-            sb.append("; server_max_window_bits=").append(serverMaxWindowBits);
-        }
-        // Only include client_max_window_bits in response if client offered it (Section 7.1.2.2)
-        if (clientMaxWindowBitsOffered && clientMaxWindowBits != 15) {
-            sb.append("; client_max_window_bits=").append(clientMaxWindowBits);
-        }
 
         return sb.toString();
+    }
+
+    /**
+     * Releases the native resources held by the underlying {@link Deflater} and {@link Inflater}.
+     * Must be called when the WebSocket connection is closed.
+     */
+    @Override
+    public void close() {
+        deflater.end();
+        inflater.end();
     }
 }
 

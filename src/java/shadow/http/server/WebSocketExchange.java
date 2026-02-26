@@ -124,6 +124,10 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             e.printStackTrace();
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (wsCompression != null) {
+                wsCompression.close();
+            }
         }
 
         handler.onClose(closeStatusCode, closeReason);
