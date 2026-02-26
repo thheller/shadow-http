@@ -14,9 +14,8 @@ public class TestServer {
             } else if (request.target.equals("/ws")) {
                 request.upgradeToWebSocket(new WebSocketHandler.Base() {
                     @Override
-                    public WebSocketHandler onText(String payload) throws IOException {
+                    public void onText(String payload) throws IOException {
                         context.sendText(payload);
-                        return this;
                     }
                 });
             } else if (request.target.equals("/upload")) {

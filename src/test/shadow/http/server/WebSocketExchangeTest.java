@@ -178,10 +178,9 @@ public class WebSocketExchangeTest {
         // sends a close frame so the exchange loop terminates cleanly.
         WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(String text) throws IOException {
+            public void onText(String text) throws IOException {
                 context.sendText("echo: " + text);
                 context.sendClose(1000);
-                return this;
             }
         };
 
@@ -253,9 +252,8 @@ public class WebSocketExchangeTest {
 
         WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(String text) throws IOException {
+            public void onText(String text) throws IOException {
                 received.add(text);
-                return this;
             }
         };
 
@@ -276,9 +274,8 @@ public class WebSocketExchangeTest {
 
         WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onBinary(byte[] payload) {
+            public void onBinary(byte[] payload) {
                 receivedPayload[0] = payload;
-                return this;
             }
         };
 
@@ -299,9 +296,8 @@ public class WebSocketExchangeTest {
 
         WebSocketHandler handler = new WebSocketHandler.Base() {
             @Override
-            public WebSocketHandler onText(String text) {
+            public void onText(String text) {
                 received.add(text);
-                return this;
             }
         };
 
@@ -506,9 +502,8 @@ public class WebSocketExchangeTest {
 
                 WebSocketHandler handler = new WebSocketHandler.Base() {
                     @Override
-                    public WebSocketHandler onText(String text) throws IOException {
+                    public void onText(String text) throws IOException {
                         context.sendText(text);
-                        return this;
                     }
                 };
 
@@ -563,9 +558,8 @@ public class WebSocketExchangeTest {
 
             WebSocketHandler handler = new WebSocketHandler.Base() {
                 @Override
-                public WebSocketHandler onText(String text) throws IOException {
+                public void onText(String text) throws IOException {
                     context.sendText(text);
-                    return this;
                 }
             };
 

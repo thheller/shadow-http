@@ -7,18 +7,15 @@ public interface WebSocketHandler {
     default WebSocketHandler start(WebSocketConnection ctx) {
         return this;
     }
-    default WebSocketHandler onText(String payload) throws IOException {
-        return this;
+    default void onText(String payload) throws IOException {
     }
 
-    default WebSocketHandler onBinary(byte[] payload) throws IOException {
-        return this;
+    default void onBinary(byte[] payload) throws IOException {
     }
 
-    WebSocketHandler onPing(byte[] payload) throws IOException;
+    void onPing(byte[] payload) throws IOException;
 
-    default WebSocketHandler onPong(byte[] payload) throws IOException {
-        return this;
+    default void onPong(byte[] payload) throws IOException {
     }
 
     default void onClose(int statusCode, String reason) {
@@ -37,24 +34,20 @@ public interface WebSocketHandler {
         }
 
         @Override
-        public WebSocketHandler onText(String payload) throws IOException {
-            return this;
+        public void onText(String payload) throws IOException {
         }
 
         @Override
-        public WebSocketHandler onBinary(byte[] payload) throws IOException {
-            return this;
+        public void onBinary(byte[] payload) throws IOException {
         }
 
         @Override
-        public WebSocketHandler onPing(byte[] payload) throws IOException {
+        public void onPing(byte[] payload) throws IOException {
             context.sendPong(payload);
-            return this;
         }
 
         @Override
-        public WebSocketHandler onPong(byte[] payload) throws IOException {
-            return this;
+        public void onPong(byte[] payload) throws IOException {
         }
 
         @Override
