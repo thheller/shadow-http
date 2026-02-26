@@ -5,9 +5,12 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Handler;
 
 public class Server {
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -30,18 +33,20 @@ public class Server {
     }
 
     public void setHandlers(HttpHandler... handlers) {
-        HttpHandler[] prev = this.handlers;
+        if (handlers == null || handlers.length == 0) {
+            throw new IllegalArgumentException("can't take no handlers");
+        }
+
+        if (this.handlers != null) {
+            for (HttpHandler handler : this.handlers) {
+                handler.cleanup();
+            }
+        }
 
         this.handlers = new HttpHandler[handlers.length];
         for (int i = 0; i < handlers.length; i++) {
             HttpHandler handler = handlers[i];
             this.handlers[i] = handler.addedToServer(this);
-        }
-
-        if (prev != null) {
-            for (HttpHandler httpHandler : prev) {
-                httpHandler.cleanup();
-            }
         }
     }
 
@@ -62,7 +67,7 @@ public class Server {
     }
 
     public void start(int port) throws IOException {
-       start("0.0.0.0", port) ;
+        start("0.0.0.0", port);
     }
 
     public void start(String host, int port) throws IOException {
@@ -91,8 +96,12 @@ public class Server {
 
         List<Runnable> remaining = executor.shutdownNow();
 
-        if (!remaining.isEmpty()){
+        if (!remaining.isEmpty()) {
             // FIXME: do something?
+        }
+
+        for (HttpHandler handler : handlers) {
+            handler.cleanup();
         }
     }
 
@@ -130,7 +139,7 @@ public class Server {
                 }
             } catch (SocketException e) {
                 // ignore, most likely closed
-            } catch (IOException e)  {
+            } catch (IOException e) {
                 e.printStackTrace();
             }
 
