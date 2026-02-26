@@ -18,7 +18,7 @@ public class FileHandlerTest {
 
 
     private static FileHandler handler() throws IOException {
-        return FileHandler.forPath(ROOT).findFiles();
+        return FileHandler.forPath(ROOT);
     }
 
     // -----------------------------------------------------------------------

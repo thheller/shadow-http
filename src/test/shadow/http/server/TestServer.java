@@ -45,7 +45,7 @@ public class TestServer {
             }
         };
 
-        HttpHandler files = FileHandler.forPath("docs").findFiles().watch();
+        HttpHandler files = FileHandler.forPath("docs");
         ClasspathHandler cp1 = ClasspathHandler.forPrefix("/shadow/cljs/ui/dist");
         ClasspathHandler cp2 = ClasspathHandler.forPrefix("/");
 

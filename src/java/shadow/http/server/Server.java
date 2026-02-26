@@ -94,8 +94,6 @@ public class Server {
         if (!remaining.isEmpty()){
             // FIXME: do something?
         }
-
-        join();
     }
 
     public void join() throws InterruptedException {
