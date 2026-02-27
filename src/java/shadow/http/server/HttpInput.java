@@ -4,6 +4,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
+import java.util.function.BiFunction;
 
 /**
  * A Stream based HTTP Parser following RFC 9112
@@ -11,6 +12,8 @@ import java.util.*;
  * requires InputStream that supports mark, assuming we'll get one and don't check
  */
 public class HttpInput {
+
+    public static final BiFunction<String, String, String> MERGE_HEADERS = (v1, v2) -> v1 + ", " + v2;
 
     private static final int CR = '\r';
     private static final int LF = '\n';
@@ -60,7 +63,8 @@ public class HttpInput {
         readHeaders(request);
 
         // Section 3.2: Host header validation
-        validateHostHeader(request, version);
+
+        request.checkBeforeProcessing();
 
         return request;
     }
@@ -484,8 +488,8 @@ public class HttpInput {
 
             String value = readHeaderValue();
 
-            request.headersInOrder.add(new Header(nameIn, name, value));
-            request.headers.put(name, value);
+            request.requestHeadersInOrder.add(new Header(nameIn, name, value));
+            request.requestHeaders.merge(name, value, MERGE_HEADERS);
             headerCount++;
 
             if (headerCount > MAX_HEADERS) {
@@ -605,32 +609,7 @@ public class HttpInput {
         return buf.toString();
     }
 
-    /**
-     * Section 3.2: A client MUST send a Host header field in all HTTP/1.1
-     * request messages. A server MUST respond with 400 if missing or duplicated.
-     */
-    private void validateHostHeader(HttpRequest request, String version) throws IOException {
-        if (!"HTTP/1.1".equals(version)) {
-            return; // Host requirement is specific to HTTP/1.1
-        }
-        int hostCount = 0;
 
-        if (request.hasRepeatedHeaders()) {
-            for (Header h : request.headersInOrder) {
-                if (h.name.equals("host")) {
-                    hostCount++;
-                }
-            }
-            if (hostCount == 0) {
-                throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
-            }
-            if (hostCount > 1) {
-                throw new BadRequestException("Multiple Host header fields in HTTP/1.1 request");
-            }
-        } else if (!request.hasHeader("host")) {
-            throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
-        }
-    }
 
     private void expectSp() throws IOException {
         int b = readByte();

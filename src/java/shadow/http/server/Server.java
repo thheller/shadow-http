@@ -57,7 +57,7 @@ public class Server {
         for (HttpHandler handler : current) {
             handler.handle(request);
 
-            if (request.didRespond()) {
+            if (request.isCommitted()) {
                 break;
             }
         }

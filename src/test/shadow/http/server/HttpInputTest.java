@@ -33,13 +33,13 @@ public class HttpInputTest {
                 "Host: example.com\r\n" +
                 "\r\n"
         );
-        assertEquals("GET", req.method);
-        assertEquals("/", req.target);
-        assertEquals("HTTP/1.1", req.httpVersion);
-        assertEquals(1, req.headersInOrder.size());
-        assertEquals("Host", req.headersInOrder.get(0).nameIn);
-        assertEquals("host", req.headersInOrder.get(0).name);
-        assertEquals("example.com", req.headersInOrder.get(0).value);
+        assertEquals("GET", req.requestMethod);
+        assertEquals("/", req.requestTarget);
+        assertEquals("HTTP/1.1", req.requestVersion);
+        assertEquals(1, req.requestHeadersInOrder.size());
+        assertEquals("Host", req.requestHeadersInOrder.get(0).nameIn);
+        assertEquals("host", req.requestHeadersInOrder.get(0).name);
+        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
     }
 
     @Test
@@ -51,9 +51,9 @@ public class HttpInputTest {
                 "Content-Length: 42\r\n" +
                 "\r\n"
         );
-        assertEquals("POST", req.method);
-        assertEquals("/submit", req.target);
-        assertEquals(3, req.headersInOrder.size());
+        assertEquals("POST", req.requestMethod);
+        assertEquals("/submit", req.requestTarget);
+        assertEquals(3, req.requestHeadersInOrder.size());
     }
 
     @Test
@@ -63,7 +63,7 @@ public class HttpInputTest {
                 "Host: example.com\r\n" +
                 "\r\n"
         );
-        assertEquals("GET", req.method);
+        assertEquals("GET", req.requestMethod);
     }
 
     @Test
@@ -72,8 +72,8 @@ public class HttpInputTest {
                 "GET / HTTP/1.0\r\n" +
                 "\r\n"
         );
-        assertEquals("HTTP/1.0", req.httpVersion);
-        assertTrue(req.headersInOrder.isEmpty());
+        assertEquals("HTTP/1.0", req.requestVersion);
+        assertTrue(req.requestHeadersInOrder.isEmpty());
     }
 
     @Test
@@ -84,7 +84,7 @@ public class HttpInputTest {
                 "Host: example.com\r\n" +
                 "\r\n"
         );
-        assertEquals("GET", req.method);
+        assertEquals("GET", req.requestMethod);
     }
 
     @Test
@@ -94,7 +94,7 @@ public class HttpInputTest {
                 "Host:   example.com   \r\n" +
                 "\r\n"
         );
-        assertEquals("example.com", req.headersInOrder.get(0).value);
+        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
     }
 
     @Test
@@ -105,7 +105,7 @@ public class HttpInputTest {
                 "Host: example.com\r\n" +
                 "\r\n"
         );
-        Header h = req.headersInOrder.get(0);
+        Header h = req.requestHeadersInOrder.get(0);
         assertEquals("X-Custom-Header", h.nameIn);
         assertEquals("x-custom-header", h.name);
     }
@@ -117,8 +117,8 @@ public class HttpInputTest {
                 "Host: example.com\n" +
                 "\n"
         );
-        assertEquals("GET", req.method);
-        assertEquals("example.com", req.headersInOrder.get(0).value);
+        assertEquals("GET", req.requestMethod);
+        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
     }
 
     @Test
@@ -130,7 +130,7 @@ public class HttpInputTest {
                 "  continuation\r\n" +
                 "\r\n"
         );
-        Header folded = req.headersInOrder.get(1);
+        Header folded = req.requestHeadersInOrder.get(1);
         assertEquals("first continuation", folded.value);
     }
 
@@ -141,7 +141,7 @@ public class HttpInputTest {
                 "Host: example.com\r\n" +
                 "\r\n"
         );
-        assertEquals("/path?query=1&other=2#frag", req.target);
+        assertEquals("/path?query=1&other=2#frag", req.requestTarget);
     }
 
     // -------------------------------------------------------------------------

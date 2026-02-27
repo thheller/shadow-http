@@ -38,7 +38,7 @@ public class HttpExchangeTest {
     @Test
     void simpleGetRequest() throws IOException {
         HttpHandler helloWorld = (request) -> {
-            request.respond().writeString("Hello World!");
+            request.writeString("Hello World!");
         };
 
         String result = run(helloWorld,
@@ -48,7 +48,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 12\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -58,7 +57,7 @@ public class HttpExchangeTest {
     @Test
     void simpleMultipleRequests() throws IOException {
         HttpHandler helloWorld = (request) -> {
-            request.respond().writeString("Hello World!");
+            request.writeString("Hello World!");
         };
 
         String request = "GET / HTTP/1.1\r\n" +
@@ -69,7 +68,6 @@ public class HttpExchangeTest {
 
         String expectedResponse =
                 "HTTP/1.1 200 \r\n" +
-                        "content-type: text/html\r\n" +
                         "content-length: 12\r\n" +
                         "connection: keep-alive\r\n" +
                         "\r\n" +
@@ -80,9 +78,9 @@ public class HttpExchangeTest {
 
     @Test
     void postRequestWithBody() throws IOException {
-        HttpHandler echo = (request)-> {
-            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
-            request.respond().writeString("Echo: " + body);
+        HttpHandler echo = (request) -> {
+            String body = new String(request.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            request.writeString("Echo: " + body);
         };
 
         String result = run(echo,
@@ -94,7 +92,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 17\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -103,8 +100,8 @@ public class HttpExchangeTest {
 
     @Test
     void postRequestWithBodyThatsNotHandled() throws IOException {
-        HttpHandler echo = (request)-> {
-            request.respond().writeString("totally ignored body");
+        HttpHandler echo = (request) -> {
+            request.writeString("totally ignored body");
         };
 
         String result = run(echo,
@@ -119,13 +116,11 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 20\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
                 "totally ignored body" +
                 "HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 20\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -139,12 +134,12 @@ public class HttpExchangeTest {
         String chunk2 = "y".repeat(4096);
         String chunkedBody =
                 Integer.toHexString(chunk1.length()) + "\r\n" + chunk1 + "\r\n" +
-                Integer.toHexString(chunk2.length()) + "\r\n" + chunk2 + "\r\n" +
-                "0\r\n\r\n";
+                        Integer.toHexString(chunk2.length()) + "\r\n" + chunk2 + "\r\n" +
+                        "0\r\n\r\n";
 
-        HttpHandler echo = (request)-> {
-            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
-            request.respond().setChunked(false).setCompress(false).writeString(body);
+        HttpHandler echo = (request) -> {
+            String body = new String(request.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            request.writeString(body);
         };
 
         String result = run(echo,
@@ -157,7 +152,6 @@ public class HttpExchangeTest {
 
         String expectedBody = chunk1 + chunk2;
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: " + expectedBody.length() + "\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -168,9 +162,9 @@ public class HttpExchangeTest {
     void largeBody() throws IOException {
         String largePayload = "x".repeat(10000);
 
-        HttpHandler echo = (request)-> {
-            String body = new String(request.body().readAllBytes(), StandardCharsets.UTF_8);
-            request.respond().setChunked(false).setCompress(false).writeString(body);
+        HttpHandler echo = (request) -> {
+            String body = new String(request.requestBody().readAllBytes(), StandardCharsets.UTF_8);
+            request.writeString(body);
         };
 
         String result = run(echo,
@@ -182,7 +176,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 10000\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -191,7 +184,7 @@ public class HttpExchangeTest {
 
     @Test
     void notFoundWhenUnhandled() throws IOException {
-        HttpHandler neverHandles = (request)-> {
+        HttpHandler neverHandles = (request) -> {
         };
 
         String result = run(neverHandles,
@@ -210,8 +203,8 @@ public class HttpExchangeTest {
 
     @Test
     void customStatusCode() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().setStatus(201).writeString("Created");
+        HttpHandler handler = (request) -> {
+            request.setResponseStatus(201).writeString("Created");
         };
 
         String result = run(handler,
@@ -221,7 +214,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 201 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 7\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -230,10 +222,8 @@ public class HttpExchangeTest {
 
     @Test
     void customContentType() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond()
-                    .setContentType("application/json")
-                    .writeString("{\"ok\":true}");
+        HttpHandler handler = (request) -> {
+            request.setResponseHeader("content-type", "application/json").writeString("{\"ok\":true}");
         };
 
         String result = run(handler,
@@ -252,10 +242,8 @@ public class HttpExchangeTest {
 
     @Test
     void customResponseHeader() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond()
-                    .setHeader("x-custom", "foobar")
-                    .writeString("ok");
+        HttpHandler handler = (request) -> {
+            request.setResponseHeader("x-custom", "foobar").writeString("ok");
         };
 
         String result = run(handler,
@@ -265,19 +253,18 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
+                "x-custom: foobar\r\n" +
                 "content-length: 2\r\n" +
                 "connection: keep-alive\r\n" +
-                "x-custom: foobar\r\n" +
                 "\r\n" +
                 "ok", result);
     }
 
     @Test
     void requestHeadersAreAccessible() throws IOException {
-        HttpHandler handler = (request)-> {
-            String ua = request.getHeaderValue("user-agent");
-            request.respond().writeString("UA: " + ua);
+        HttpHandler handler = (request) -> {
+            String ua = request.getRequestHeaderValue("user-agent");
+            request.writeString("UA: " + ua);
         };
 
         String result = run(handler,
@@ -288,7 +275,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 19\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -297,8 +283,8 @@ public class HttpExchangeTest {
 
     @Test
     void requestPathAndMethodAccessible() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().writeString(request.method + " " + request.target);
+        HttpHandler handler = (request) -> {
+            request.writeString(request.requestMethod + " " + request.requestTarget);
         };
 
         String result = run(handler,
@@ -308,7 +294,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 16\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -317,8 +302,8 @@ public class HttpExchangeTest {
 
     @Test
     void emptyBodyResponse() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().setStatus(204).setContentLength(0).noContent();
+        HttpHandler handler = (request) -> {
+            request.setResponseStatus(204).setResponseHeader("content-length", "0").skipBody();
         };
 
         String result = run(handler,
@@ -335,12 +320,12 @@ public class HttpExchangeTest {
 
     @Test
     void doubleRespondThrows() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().writeString("first");
+        HttpHandler handler = (request) -> {
+            request.writeString("first");
             try {
-                request.respond();
+                request.writeString("second");
             } catch (IllegalStateException e) {
-                assertEquals("already responded", e.getMessage());
+                assertEquals("HttpRequest already completed", e.getMessage());
             }
         };
 
@@ -353,8 +338,8 @@ public class HttpExchangeTest {
 
     @Test
     void emptyInputProducesNoOutput() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().writeString("should not happen");
+        HttpHandler handler = (request) -> {
+            request.writeString("should not happen");
         };
 
         String result = run(handler, "");
@@ -364,8 +349,8 @@ public class HttpExchangeTest {
 
     @Test
     void requestWithQueryString() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond().writeString("path=" + request.target);
+        HttpHandler handler = (request) -> {
+            request.writeString("path=" + request.requestTarget);
         };
 
         String result = run(handler,
@@ -375,7 +360,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 27\r\n" +
                 "connection: keep-alive\r\n" +
                 "\r\n" +
@@ -408,10 +392,8 @@ public class HttpExchangeTest {
 
     @Test
     void connectionCloseHeader() throws IOException {
-        HttpHandler handler = (request)-> {
-            request.respond()
-                    .setCloseAfter(true)
-                    .writeString("bye");
+        HttpHandler handler = (request) -> {
+            request.setCloseAfter(true).writeString("bye");
         };
 
         // Send two requests but expect only one response due to connection: close
@@ -427,7 +409,6 @@ public class HttpExchangeTest {
 
         // Should only contain one response since connection: close breaks the loop
         assertEquals("HTTP/1.1 200 \r\n" +
-                "content-type: text/html\r\n" +
                 "content-length: 3\r\n" +
                 "connection: close\r\n" +
                 "\r\n" +
@@ -436,7 +417,7 @@ public class HttpExchangeTest {
 
     @Test
     void badRequestGets400() throws IOException {
-        HttpHandler handler = (request)-> {
+        HttpHandler handler = (request) -> {
             throw new IllegalStateException("should not have gotten here");
         };
 

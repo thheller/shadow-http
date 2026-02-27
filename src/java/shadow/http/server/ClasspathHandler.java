@@ -56,11 +56,11 @@ public class ClasspathHandler implements HttpHandler {
 
     @Override
     public void handle(HttpRequest request) throws IOException {
-        if (!"GET".equals(request.method) && !"HEAD".equals(request.method)) {
+        if (!"GET".equals(request.requestMethod) && !"HEAD".equals(request.requestMethod)) {
             return;
         }
 
-        String uri = request.target;
+        String uri = request.requestTarget;
 
         if (!uri.startsWith("/")) {
             return;
@@ -108,9 +108,9 @@ public class ClasspathHandler implements HttpHandler {
                 : null;
 
         if (lastModified != null) {
-            String ifModifiedSince = request.getHeaderValue("if-modified-since");
+            String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
             if (lastModified.equals(ifModifiedSince)) {
-                request.respond().setStatus(304).noContent();
+                request.respondNoContent();
                 return;
             }
         }
@@ -123,31 +123,28 @@ public class ClasspathHandler implements HttpHandler {
 
         boolean compress = contentLength >= 850 && server.config.isCompressible(mimeType);
 
-        HttpResponse response = request.respond()
-                .setStatus(200)
-                .setContentType(mimeType);
+        request.setResponseStatus(200);
+        request.setResponseHeader("content-type", mimeType);
 
         if (compress) {
-            response.setCompress(true);
-            response.setChunked(true);
+            request.autoCompress = true;
+            request.autoChunk = true;
         } else {
-            response.setCompress(false);
-            if (contentLength > 0) {
-                response.setContentLength(contentLength);
-            }
+            request.autoCompress = false;
+            request.responseLength = contentLength;
         }
 
-        response.setHeader("cache-control", "private, no-cache");
+        request.setResponseHeader("cache-control", "private, no-cache");
         if (lastModified != null) {
-            response.setHeader("last-modified", lastModified);
+            request.setResponseHeader("last-modified", lastModified);
         }
 
-        if ("GET".equals(request.method)) {
+        if ("GET".equals(request.requestMethod)) {
             try (InputStream in = new BufferedInputStream(conn.getInputStream(), server.config.outputBufferSize)) {
-                response.writeStream(in);
+                request.writeStream(in);
             }
         } else {
-            response.skipBody();
+            request.skipBody();
         }
     }
 

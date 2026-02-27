@@ -9,32 +9,26 @@ public class TestServer {
     public static void main(String[] args) throws Exception {
 
         HttpHandler test = (request) -> {
-            if (request.target.equals("/")) {
-                request.respond().setStatus(200).setContentType("text/plain").writeString("ok!");
-            } else if (request.target.equals("/ws")) {
+            if (request.requestTarget.equals("/")) {
+                request.setResponseHeader("content-type", "text/plain").writeString("ok!");
+            } else if (request.requestTarget.equals("/ws")) {
                 request.upgradeToWebSocket(new WebSocketHandler.Base() {
                     @Override
                     public void onText(String payload) throws IOException {
                         context.sendText(payload);
                     }
                 });
-            } else if (request.target.equals("/upload")) {
-                try (InputStream body = request.body()) {
-                    try (OutputStream out = request.respond().setStatus(200).setCompress(true).setChunked(true).setContentType("text/plain").body()) {
+            } else if (request.requestTarget.equals("/upload")) {
+                try (InputStream body = request.requestBody()) {
+                    try (OutputStream out = request.setResponseHeader("content-type", "text/plain").responseBody()) {
                         body.transferTo(out);
                     }
                 }
-            } else if (request.target.equals("/sse")) {
-
-                HttpResponse response = request.respond()
-                        .setStatus(200)
-                        .setContentType("text/event-stream")
-                        .setChunked(true)
-                        .setBody(true)
-                        .setCompress(true);
+            } else if (request.requestTarget.equals("/sse")) {
+                request.setResponseHeader("content-type", "text/event-stream");
 
                 while (true) {
-                    response.writeString("data: " + System.currentTimeMillis() + "\n\n", false);
+                    request.writeString("data: " + System.currentTimeMillis() + "\n\n", false);
                     try {
                         Thread.sleep(1000);
                     } catch (InterruptedException e) {

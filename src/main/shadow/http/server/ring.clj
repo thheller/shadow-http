@@ -12,14 +12,14 @@
 (defn build-request-map
   "Builds a Ring request map from an HttpRequest."
   [^HttpRequest request]
-  (let [target (.getTarget request)
+  (let [target (.getRequestTarget request)
         qi (.indexOf target (int \?))
         uri (if (neg? qi) target (subs target 0 qi))
         query-string (when (pos? qi) (subs target (inc qi)))
 
         ;; Ring requires lowercased header names -> values
         ;; HttpRequest.headers already stores name lowercased -> value
-        headers (.getHeaders request)
+        headers (.getRequestHeaders request)
 
         ;; extract host header for server-name/server-port
         host (.get headers "host")
@@ -32,12 +32,12 @@
                (try (Integer/parseInt (subs host (inc ci)))
                     (catch Exception _ 80))])))
 
-        method (keyword (.toLowerCase (.getMethod request)))]
+        method (keyword (.toLowerCase (.getRequestMethod request)))]
 
     (cond-> {:request-method method
              :uri uri
              :headers (into {} headers)
-             :protocol (.getHttpVersion request)
+             :protocol (.getRequestVersion request)
              :scheme :http
              :server-name (or server-name "localhost")
              :server-port (or server-port 80)
@@ -45,60 +45,48 @@
       query-string
       (assoc :query-string query-string)
 
-      (.hasBody request)
-      (assoc :body (.body request))
+      (.requestHasBody request)
+      (assoc :body (.requestBody request))
       )))
 
 (defn write-ring-response
   "Writes a Ring response map to the HttpResponse."
   [^HttpRequest request ring-response]
-  (let [^HttpResponse response (.respond request)
-        status (get ring-response :status 200)
+  (let [status (get ring-response :status 200)
         headers (get ring-response :headers)
         body (get ring-response :body)]
 
-    (.setStatus response status)
-
-    ;; set content-type from headers if present
-    (when-let [ct (get headers "content-type")]
-      (.setContentType response ct))
+    (.setResponseStatus request status)
 
     ;; set all other headers
     (doseq [[k v] headers]
-      (when-not (#{"content-type" "content-length" "transfer-encoding"} k)
-        (if (string? v)
-          (.setHeader response k v)
-          ;; ring allows header values to be vectors of strings
-          (throw (ex-info "currently not supporting header vector values" {:header k :value v})))))
-
-    ;; handle content-length if specified
-    (when-let [cl (get headers "content-length")]
-      (try
-        (.setContentLength response (Long/parseLong cl))
-        (catch Exception _)))
+      (if (string? v)
+        (.setHeader request k v)
+        ;; ring allows header values to be vectors of strings
+        (throw (ex-info "currently not supporting header vector values" {:header k :value v}))))
 
     ;; write body
     (cond
       (nil? body)
-      (.noContent response)
+      (.respondNoContent request)
 
       (string? body)
-      (.writeString response ^String body)
+      (.writeString request ^String body)
 
       (instance? InputStream body)
-      (.writeStream response ^InputStream body)
+      (.writeStream request ^InputStream body)
 
       (instance? (Class/forName "[B") body)
-      (with-open [^java.io.OutputStream out (.body response)]
+      (with-open [^java.io.OutputStream out (.requestBody request)]
         (.write out ^bytes body)
         (.flush out))
 
       (instance? File body)
       (with-open [is (java.io.FileInputStream. ^File body)]
-        (.writeStream response is))
+        (.writeStream request is))
 
       (seq? body)
-      (with-open [^java.io.OutputStream out (.body response)]
+      (with-open [^java.io.OutputStream out (.requestBody request)]
         (doseq [chunk body]
           (when chunk
             (cond
@@ -109,8 +97,7 @@
         (.flush out))
 
       :else
-      (do (.setContentType response "text/plain")
-          (.writeString response (str body))))))
+      (do (.writeString request (str body))))))
 
 (deftype RingWebSocketHandler [^WebSocketConnection ctx listener]
   WebSocketHandler

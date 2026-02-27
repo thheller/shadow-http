@@ -4,13 +4,15 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 class InterceptedCloseOutputStream extends OutputStream {
-    private final HttpResponse response;
+    private final HttpRequest request;
     private final OutputStream target;
 
-    InterceptedCloseOutputStream(HttpResponse response, OutputStream target) {
+    public long bytesWritten = 0;
+
+    InterceptedCloseOutputStream(HttpRequest request, OutputStream target) {
         super();
 
-        this.response = response;
+        this.request = request;
         this.target = target;
     }
 
@@ -22,6 +24,7 @@ class InterceptedCloseOutputStream extends OutputStream {
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
         target.write(b, off, len);
+        bytesWritten += b.length;
     }
 
     @Override
@@ -32,11 +35,13 @@ class InterceptedCloseOutputStream extends OutputStream {
     @Override
     public void close() throws IOException {
         target.flush();
-        response.state = HttpResponse.State.COMPLETE;
+        request.responseBytesWritten = bytesWritten;
+        request.state = HttpRequest.State.COMPLETE;
     }
 
     @Override
     public void write(int b) throws IOException {
         target.write(b);
+        bytesWritten += 1;
     }
 }

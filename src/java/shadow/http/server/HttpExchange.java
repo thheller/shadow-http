@@ -51,19 +51,19 @@ public class HttpExchange implements Exchange {
 
             connection.getServer().handle(request);
 
-            if (!request.didRespond()) {
-                request.respond().setStatus(404)
-                        .setContentType("text/plain")
+            if (!request.isCommitted()) {
+                request.setResponseStatus(404)
+                        .setResponseHeader("content-type", "text/plain")
                         .writeString("Not found.");
             }
 
-            if (request.hasBody()) {
+            if (request.requestHasBody()) {
                 // FIXME: point is to entirely drain the request body
                 // or should it be an error if the handler didn't do that?
-                request.body().close();
+                request.requestBody().close();
             }
 
-            if (request.response.state != HttpResponse.State.COMPLETE) {
+            if (request.state != HttpRequest.State.COMPLETE) {
                 throw new IllegalStateException("request not actually completed");
             }
 
@@ -75,7 +75,7 @@ public class HttpExchange implements Exchange {
 
             request = null;
 
-            if (upgraded || req.response.closeAfter) {
+            if (upgraded || req.closeAfter) {
                 break;
             }
         }

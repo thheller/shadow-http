@@ -78,14 +78,14 @@ public class IndexingFileHandler implements HttpHandler {
     @Override
     public void handle(HttpRequest request) throws IOException {
         // POST should never serve files right?
-        if (!"GET".equals(request.method) && !"HEAD".equals(request.method)) {
+        if (!"GET".equals(request.requestMethod) && !"HEAD".equals(request.requestMethod)) {
             return;
         }
 
         // FIXME: should this all be case insensitive? probably not right?
         // only make sense for case insensitive file systems, otherwise foo.txt and FOO.txt might exist
         // but we could only serve one?
-        String uri = request.target;
+        String uri = request.requestTarget;
 
         if (!uri.startsWith("/")) {
             return;
@@ -118,9 +118,9 @@ public class IndexingFileHandler implements HttpHandler {
         FileTime lastModifiedTime = Files.getLastModifiedTime(fileInfo.path);
         String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
 
-        String ifModifiedSince = request.getHeaderValue("if-modified-since");
+        String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
         if (lastModified.equals(ifModifiedSince)) {
-            request.respond().setStatus(304).noContent();
+            request.setResponseStatus(304).respondNoContent();
         } else {
             long size = Files.size(fileInfo.path);
 
@@ -132,14 +132,15 @@ public class IndexingFileHandler implements HttpHandler {
             // FIXME: config option
             boolean compress = size >= 850 && server.config.isCompressible(mimeType);
 
-            HttpResponse response = request.respond().setStatus(200).setContentType(mimeType);
+            request.setResponseStatus(200);
+            request.setResponseHeader("content-type", mimeType);
 
             if (compress) {
-                response.setCompress(true);
-                response.setChunked(true);
+                request.autoCompress = true;
+                request.autoChunk = true;
             } else {
-                response.setCompress(false);
-                response.setContentLength(size);
+                request.autoCompress = false;
+                request.responseLength = size;
             }
 
             // FIXME: configurable caching options
@@ -147,17 +148,17 @@ public class IndexingFileHandler implements HttpHandler {
             // replying with 304 as above, so we don't send body again
             // this isn't ideal, but this is not a production server and during
             // dev files may change often and we never want stale files (e.g. shadow-cljs JS outputs)
-            response.setHeader("cache-control", "private, no-cache");
-            response.setHeader("last-modified", lastModified);
+            request.setResponseHeader("cache-control", "private, no-cache");
+            request.setResponseHeader("last-modified", lastModified);
 
             // HEAD requests get headers but not body
-            if ("GET".equals(request.method)) {
+            if ("GET".equals(request.requestMethod)) {
                 // using the outputBufferSize since we want to fill that asap, might as well do it all at once
                 try (InputStream in = new BufferedInputStream(Files.newInputStream(fileInfo.path), server.config.outputBufferSize)) {
-                    response.writeStream(in);
+                    request.writeStream(in);
                 }
             } else {
-                response.skipBody();
+                request.skipBody();
             }
         }
     }
