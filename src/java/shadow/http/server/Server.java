@@ -5,12 +5,9 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Handler;
 
 public class Server {
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -72,6 +69,9 @@ public class Server {
 
     public void start(String host, int port) throws IOException {
         socket = new ServerSocket();
+
+        // allow immediate restart without waiting for TIME_WAIT to expire
+        socket.setReuseAddress(true);
 
         socket.bind(new InetSocketAddress(host, port));
 

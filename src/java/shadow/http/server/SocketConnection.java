@@ -46,6 +46,10 @@ public class SocketConnection implements Connection, Runnable {
     @Override
     public void run() {
         try {
+            // disable Nagle's algorithm - we already buffer at the application level
+            // with BufferedOutputStream, so Nagle just adds unnecessary latency on flush
+            socket.setTcpNoDelay(true);
+
             this.socketIn = new BufferedInputStream(socket.getInputStream(), server.config.inputBufferSize);
             this.socketOut = new BufferedOutputStream(socket.getOutputStream(), server.config.outputBufferSize);
 
