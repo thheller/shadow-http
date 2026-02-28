@@ -154,13 +154,8 @@
   [listener]
   (RingWebSocketHandler. nil listener))
 
-(deftype RingHandler [server handler-fn]
+(deftype RingHandler [handler-fn]
   HttpHandler
-  (addedToServer [this server]
-    (RingHandler. server handler-fn))
-
-  (cleanup [this])
-
   (handle [this request]
     (let [ring-request (build-request-map request)
           ring-response (handler-fn ring-request)]
@@ -180,4 +175,4 @@
             (write-ring-response request ring-response)))))))
 
 (defn handler [handler-fn]
-  (RingHandler. nil handler-fn))
+  (RingHandler. handler-fn))

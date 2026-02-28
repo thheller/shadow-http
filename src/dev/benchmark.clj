@@ -1,7 +1,10 @@
 (ns benchmark
-  (:require [clj-async-profiler.core :as prof])
-  (:import [java.io OutputStream]
-           [shadow.http FileHandler HttpExchange Server TestConnection]))
+  (:require
+    [clj-async-profiler.core :as prof]
+    [criterium.core :as crit])
+  (:import
+    [java.io OutputStream]
+    [shadow.http.server FileHandler HttpExchange Server TestConnection]))
 
 (defn time* [^long duration-in-ms f]
   (let [^com.sun.management.ThreadMXBean bean (java.lang.management.ManagementFactory/getThreadMXBean)
