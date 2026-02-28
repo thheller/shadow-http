@@ -4,7 +4,7 @@
     [shadow.http.server.ring :as ring])
   (:import
     [java.util List]
-    [shadow.http.server ClasspathHandler FileHandler Server WebSocketHandler]))
+    [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketHandler]))
 
 (defmacro vthread [& body]
   `(let [res# (async/chan 1)]
@@ -50,9 +50,17 @@
   ([ws-in ws-out ws-loop]
    {::handler (CoreAsyncWebSocketHandler. nil nil ws-in ws-out ws-loop)}))
 
-(defn start [{:keys [host port] :as config} handlers]
+(defn start [{:keys [host port] :as config} handler]
   (let [server (Server.)]
-    (.setHandlers server ^List handlers)
+    (cond
+      (seq handler)
+      (.setHandler server (HandlerList/create ^List handler))
+
+      (instance? HttpHandler handler)
+      (.setHandler server handler)
+
+      :else
+      (throw (ex-info "invalid handler" {:handler handler})))
     (.start server (or host "0.0.0.0") port)
     {:config config
      :server server

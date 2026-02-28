@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
-public class IndexingFileHandler implements HttpHandler {
+public class IndexingFileHandler implements HttpHandler, AutoCloseable {
 
     public static final ZoneId GMT = ZoneId.of("GMT");
     public static final DateTimeFormatter LAST_MODIFIED_FORMATTER = DateTimeFormatter.RFC_1123_DATE_TIME;
@@ -23,7 +23,6 @@ public class IndexingFileHandler implements HttpHandler {
 
     Watcher watcher = null;
     Thread watcherThread = null;
-    Server server = null;
 
     public IndexingFileHandler(Path root) {
         this.root = root;
@@ -64,14 +63,10 @@ public class IndexingFileHandler implements HttpHandler {
         return this;
     }
 
-    public void watcherStop() {
+    public void watcherStop() throws IOException, InterruptedException {
         if (watcher != null) {
-            try {
-                watcher.watchService.close();
-                watcherThread.join();
-            } catch (Exception e) {
-                // FIXME: log?
-            }
+            watcher.watchService.close();
+            watcherThread.join();
         }
     }
 
@@ -115,10 +110,12 @@ public class IndexingFileHandler implements HttpHandler {
             return;
         }
 
-        FileTime lastModifiedTime = Files.getLastModifiedTime(fileInfo.path);
-        String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
+        final Server server = request.exchange.connection.getServer();
 
-        String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
+        final FileTime lastModifiedTime = Files.getLastModifiedTime(fileInfo.path);
+        final String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
+
+        final String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
         if (lastModified.equals(ifModifiedSince)) {
             request.setResponseStatus(304).respondNoContent();
         } else {
@@ -163,16 +160,8 @@ public class IndexingFileHandler implements HttpHandler {
         }
     }
 
-    public void cleanup() {
+    public void close() throws Exception {
         watcherStop();
-
-        server = null;
-    }
-
-    @Override
-    public HttpHandler addedToServer(Server server) {
-        this.server = server;
-        return this;
     }
 
     String keyForPath(Path path) {

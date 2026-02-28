@@ -13,7 +13,7 @@ public class Server {
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     final Config config;
 
-    private HttpHandler[] handlers = null;
+    private HttpHandler handler = null;
     private ServerSocket socket = null;
     private Thread acceptorThread = null;
 
@@ -26,41 +26,11 @@ public class Server {
     }
 
     public void setHandler(HttpHandler handler) {
-        setHandlers(handler);
-    }
-
-    public void setHandlers(HttpHandler... handlers) {
-        if (handlers == null || handlers.length == 0) {
-            throw new IllegalArgumentException("can't take no handlers");
-        }
-
-        if (this.handlers != null) {
-            for (HttpHandler handler : this.handlers) {
-                handler.cleanup();
-            }
-        }
-
-        this.handlers = new HttpHandler[handlers.length];
-        for (int i = 0; i < handlers.length; i++) {
-            HttpHandler handler = handlers[i];
-            this.handlers[i] = handler.addedToServer(this);
-        }
-    }
-
-    public void setHandlers(List<HttpHandler> handlers) {
-        setHandlers(handlers.toArray(new HttpHandler[0]));
+        this.handler = handler;
     }
 
     void handle(HttpRequest request) throws IOException {
-        HttpHandler[] current = handlers;
-
-        for (HttpHandler handler : current) {
-            handler.handle(request);
-
-            if (request.isCommitted()) {
-                break;
-            }
-        }
+        handler.handle(request);
     }
 
     public void start(int port) throws IOException {
@@ -98,10 +68,6 @@ public class Server {
 
         if (!remaining.isEmpty()) {
             // FIXME: do something?
-        }
-
-        for (HttpHandler handler : handlers) {
-            handler.cleanup();
         }
     }
 

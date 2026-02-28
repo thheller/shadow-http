@@ -15,8 +15,6 @@ public class FileHandler implements HttpHandler {
     public static final DateTimeFormatter LAST_MODIFIED_FORMATTER = DateTimeFormatter.RFC_1123_DATE_TIME;
     final Path root;
 
-    Server server = null;
-
     public FileHandler(Path root) {
         this.root = root;
     }
@@ -62,10 +60,11 @@ public class FileHandler implements HttpHandler {
             return;
         }
 
-        FileTime lastModifiedTime = Files.getLastModifiedTime(file);
-        String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
+        final Server server = request.exchange.connection.getServer();
+        final FileTime lastModifiedTime = Files.getLastModifiedTime(file);
+        final String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
 
-        String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
+        final String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
         if (lastModified.equals(ifModifiedSince)) {
             request.respondNoContent();
         } else {
@@ -108,16 +107,6 @@ public class FileHandler implements HttpHandler {
                 request.skipBody();
             }
         }
-    }
-
-    public void cleanup() {
-        server = null;
-    }
-
-    @Override
-    public HttpHandler addedToServer(Server server) {
-        this.server = server;
-        return this;
     }
 
     public static FileHandler forPath(Path root) throws IOException {

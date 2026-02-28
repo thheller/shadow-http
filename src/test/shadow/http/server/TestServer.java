@@ -43,7 +43,7 @@ public class TestServer {
         ClasspathHandler cp2 = ClasspathHandler.forPrefix("/");
 
         Server server = new Server();
-        server.setHandlers(files, cp1, cp2, test);
+        server.setHandler(HandlerList.create(files, cp1, cp2, test));
         server.start(5007);
 
         System.out.println("Server started on http://localhost:5007");

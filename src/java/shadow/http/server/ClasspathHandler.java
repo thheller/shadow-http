@@ -21,7 +21,6 @@ public class ClasspathHandler implements HttpHandler {
 
     private final ClassLoader classLoader;
     private final String prefix;
-    private Server server;
 
     /**
      * @param classLoader the ClassLoader to load resources from
@@ -47,12 +46,6 @@ public class ClasspathHandler implements HttpHandler {
     // -----------------------------------------------------------------------
     // HttpHandler
     // -----------------------------------------------------------------------
-
-    @Override
-    public HttpHandler addedToServer(Server server) {
-        this.server = server;
-        return this;
-    }
 
     @Override
     public void handle(HttpRequest request) throws IOException {
@@ -115,11 +108,12 @@ public class ClasspathHandler implements HttpHandler {
             }
         }
 
-        long contentLength = conn.getContentLengthLong();
+        final Server server = request.exchange.connection.getServer();
+        final long contentLength = conn.getContentLengthLong();
 
         // Derive filename for MIME type lookup
-        String filename = resourcePath.substring(resourcePath.lastIndexOf('/') + 1);
-        String mimeType = server.config.guessMimeType(filename);
+        final String filename = resourcePath.substring(resourcePath.lastIndexOf('/') + 1);
+        final String mimeType = server.config.guessMimeType(filename);
 
         boolean compress = contentLength >= 850 && server.config.isCompressible(mimeType);
 
