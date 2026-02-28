@@ -5,8 +5,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLConnection;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
 /**
  * Serves files from a ClassLoader using a configurable prefix.

@@ -1,6 +1,8 @@
 package shadow.http.server;
 
-import java.io.*;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * WebSocket frame reader for the server side, per RFC 6455 Section 5.
