@@ -49,7 +49,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 12\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "Hello World!", result);
     }
@@ -69,7 +68,6 @@ public class HttpExchangeTest {
         String expectedResponse =
                 "HTTP/1.1 200 \r\n" +
                         "content-length: 12\r\n" +
-                        "connection: keep-alive\r\n" +
                         "\r\n" +
                         "Hello World!";
 
@@ -93,7 +91,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 17\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "Echo: hello=world", result);
     }
@@ -117,12 +114,10 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 20\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "totally ignored body" +
                 "HTTP/1.1 200 \r\n" +
                 "content-length: 20\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "totally ignored body", result);
     }
@@ -153,7 +148,6 @@ public class HttpExchangeTest {
         String expectedBody = chunk1 + chunk2;
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: " + expectedBody.length() + "\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 expectedBody, result);
     }
@@ -177,7 +171,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 10000\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 largePayload, result);
     }
@@ -196,7 +189,6 @@ public class HttpExchangeTest {
         assertEquals("HTTP/1.1 404 \r\n" +
                 "content-type: text/plain\r\n" +
                 "content-length: 10\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "Not found.", result);
     }
@@ -215,7 +207,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 201 \r\n" +
                 "content-length: 7\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "Created", result);
     }
@@ -235,7 +226,6 @@ public class HttpExchangeTest {
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-type: application/json\r\n" +
                 "content-length: 11\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "{\"ok\":true}", result);
     }
@@ -255,7 +245,6 @@ public class HttpExchangeTest {
         assertEquals("HTTP/1.1 200 \r\n" +
                 "x-custom: foobar\r\n" +
                 "content-length: 2\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "ok", result);
     }
@@ -276,7 +265,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 19\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "UA: TestBrowser/1.0", result);
     }
@@ -295,7 +283,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 16\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "DELETE /items/42", result);
     }
@@ -314,7 +301,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 204 \r\n" +
                 "content-length: 0\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n", result);
     }
 
@@ -361,7 +347,6 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 200 \r\n" +
                 "content-length: 27\r\n" +
-                "connection: keep-alive\r\n" +
                 "\r\n" +
                 "path=/search?q=hello&page=1", result);
     }

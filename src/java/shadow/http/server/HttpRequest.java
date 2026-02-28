@@ -27,6 +27,12 @@ public class HttpRequest {
         COMPLETE
     }
 
+    public enum BodyMode {
+        NONE,
+        FIXED_LENGTH,
+        CHUNKED
+    }
+
     private static final byte[] CRLF = {'\r', '\n'};
     private static final byte[] COLON_SP = {':', ' '};
     private static final byte[] HTTP11_START = {'H', 'T', 'T', 'P', '/', '1', '.', '1', ' '};
@@ -42,9 +48,13 @@ public class HttpRequest {
     public final String requestMethod;
     public final String requestTarget;
     public final String requestVersion;
-    public final List<Header> requestHeadersInOrder = new ArrayList<Header>();
+    public final List<Header> requestHeadersInOrder = new ArrayList<>();
     public final Map<String, String> requestHeaders = new HashMap<>();
+
+    BodyMode requestBodyMode = BodyMode.NONE;
+
     InputStream requestBody;
+    long requestBodyLength;
 
     public State state = State.PENDING;
 
@@ -53,7 +63,7 @@ public class HttpRequest {
     public final Map<String, String> responseHeaders = new HashMap<>();
     OutputStream responseOut;
     boolean responseBody = true;
-    public long responseBytesWritten;
+    public long responseBytesWritten = 0;
 
     public boolean closeAfter = false;
     public boolean autoCompress = true;
@@ -184,28 +194,7 @@ public class HttpRequest {
      * than zero; Content-Length: 0 explicitly means no content.
      */
     public boolean requestHasBody() {
-
-        // Transfer-Encoding takes precedence (RFC 9112 Section 6.3 rule 3 & 4).
-        // Its mere presence signals that a body is being sent.
-        if (hasRequestHeader("transfer-encoding")) {
-            return true;
-        }
-
-        // Content-Length without Transfer-Encoding (RFC 9112 Section 6.2 & 6.3 rule 5+).
-        // A value of 0 means explicitly no body content.
-        String contentLength = getRequestHeaderValue("content-length");
-        if (contentLength != null) {
-            try {
-                return Long.parseLong(contentLength.trim()) > 0;
-            } catch (NumberFormatException e) {
-                // Invalid Content-Length — treat conservatively as no body signal;
-                // requestBody() will throw if actually called.
-                return false;
-            }
-        }
-
-        // No framing headers present — no body.
-        return false;
+        return requestBodyMode != BodyMode.NONE;
     }
 
     public InputStream requestBody() throws IOException {
@@ -213,26 +202,19 @@ public class HttpRequest {
             return requestBody;
         }
 
-        String transferEncoding = getRequestHeaderValue("transfer-encoding");
-        if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
-            return requestBody = new ChunkedInputStream(exchange.httpIn);
+        switch (requestBodyMode) {
+            case NONE -> {
+                throw new IllegalStateException("Request has no body (no Content-Length or Transfer-Encoding: chunked header)");
+            }
+            case FIXED_LENGTH -> {
+                requestBody = new ContentLengthInputStream(exchange.in, requestBodyLength);
+            }
+            case CHUNKED -> {
+                requestBody = new ChunkedInputStream(exchange);
+            }
         }
 
-        String contentLengthHeader = getRequestHeaderValue("content-length");
-        if (contentLengthHeader != null) {
-            long contentLength;
-            try {
-                contentLength = Long.parseLong(contentLengthHeader.trim());
-            } catch (NumberFormatException e) {
-                throw new IOException("Invalid Content-Length header: " + contentLengthHeader);
-            }
-            if (contentLength < 0) {
-                throw new IOException("Negative Content-Length: " + contentLength);
-            }
-            return requestBody = new ContentLengthInputStream(exchange.in, contentLength);
-        }
-
-        throw new IllegalStateException("Request has no body (no Content-Length or Transfer-Encoding: chunked header)");
+        return requestBody;
     }
 
     public boolean isCommitted() {
@@ -336,7 +318,8 @@ public class HttpRequest {
     }
 
     /**
-     * utility method to serve files from disk
+     * utility method to serve files from disk. assumes that caller verified that the file should be served.
+     * does not check for any path traversal attacks. caller must verify before.
      *
      * @param file must be regular readable file
      * @throws IOException
@@ -431,7 +414,7 @@ public class HttpRequest {
 
         if (closeAfter) {
             writeHeader("connection", "close");
-        } else {
+        } else if ("HTTP/1.0".equals(requestVersion)) {
             writeHeader("connection", "keep-alive");
         }
 
@@ -462,30 +445,63 @@ public class HttpRequest {
         }
     }
 
-    void checkBeforeProcessing() throws BadRequestException {
-        /**
-         * Section 3.2: A client MUST send a Host header field in all HTTP/1.1
-         * request messages. A server MUST respond with 400 if missing or duplicated.
+    /**
+     * validates and extracts some data from request headers after parsing is finished
+     */
+    void prepare() throws BadRequestException {
+        /*
+          Section 3.2: A client MUST send a Host header field in all HTTP/1.1
+          request messages. A server MUST respond with 400 if missing or duplicated.
          */
-        if (!"HTTP/1.1".equals(requestVersion)) {
-            return; // Host requirement is specific to HTTP/1.1
-        }
-        int hostCount = 0;
+        if ("HTTP/1.1".equals(requestVersion)) {
+            int hostCount = 0;
 
-        if (hasRepeatedRequestHeaders()) {
-            for (Header h : requestHeadersInOrder) {
-                if (h.name.equals("host")) {
-                    hostCount++;
+            if (hasRepeatedRequestHeaders()) {
+                for (Header h : requestHeadersInOrder) {
+                    if (h.name.equals("host")) {
+                        hostCount++;
+                    }
                 }
-            }
-            if (hostCount == 0) {
+                if (hostCount == 0) {
+                    throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
+                }
+                if (hostCount > 1) {
+                    throw new BadRequestException("Multiple Host header fields in HTTP/1.1 request");
+                }
+            } else if (!hasRequestHeader("host")) {
                 throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
             }
-            if (hostCount > 1) {
-                throw new BadRequestException("Multiple Host header fields in HTTP/1.1 request");
+        } else if ("HTTP/1.0".equals(requestVersion)) {
+            closeAfter = !getRequestHeaderValue("connection").equalsIgnoreCase("keep-alive");
+        } else {
+            throw new BadRequestException("Unsupported HTTP Version: " + requestVersion);
+        }
+
+
+        String transferEncoding = getRequestHeaderValue("transfer-encoding");
+        if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
+            requestBodyMode = BodyMode.CHUNKED;
+        }
+
+        // chunked wins. FIXME: spec says sending both is violation
+        String contentLengthHeader = getRequestHeaderValue("content-length");
+        if (requestBodyMode != BodyMode.CHUNKED && contentLengthHeader != null) {
+            long contentLength;
+            try {
+                contentLength = Long.parseLong(contentLengthHeader.trim());
+            } catch (NumberFormatException e) {
+                throw new BadRequestException("Invalid Content-Length header: " + contentLengthHeader);
             }
-        } else if (!hasRequestHeader("host")) {
-            throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
+            if (contentLength < 0) {
+                throw new BadRequestException("Negative Content-Length: " + contentLength);
+            }
+
+            if (contentLength > exchange.connection.getServer().getConfig().maximumRequestBodySize) {
+                throw new BadRequestException("Request Content-Length exceeds maximum acceptable size: " + contentLength) ;
+            }
+
+            requestBodyLength = contentLength;
+            requestBodyMode = BodyMode.FIXED_LENGTH;
         }
     }
 

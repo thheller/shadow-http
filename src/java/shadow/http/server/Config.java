@@ -18,6 +18,8 @@ public class Config {
     int inputBufferSize = 8192;
     int outputBufferSize = 65536; //  32768;
 
+    long maximumRequestBodySize = 10_000_000;
+
     public Config() {
         mimeTypes.put("html", "text/html");
         mimeTypes.put("htm", "text/html");
@@ -72,6 +74,14 @@ public class Config {
         compressibleTypes.add("application/wasm");
         compressibleTypes.add("font/woff");
         compressibleTypes.add("font/woff2");
+    }
+
+    public long getMaximumRequestBodySize() {
+        return maximumRequestBodySize;
+    }
+
+    public void setMaximumRequestBodySize(long maximumRequestBodySize) {
+        this.maximumRequestBodySize = maximumRequestBodySize;
     }
 
     public int getInputBufferSize() {

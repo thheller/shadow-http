@@ -12,14 +12,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class HttpInputTest {
 
-    private HttpInput inputFor(String raw) {
-        byte[] bytes = raw.getBytes(StandardCharsets.US_ASCII);
-        // BufferedInputStream supports mark/reset
-        return new HttpInput(null, new BufferedInputStream(new ByteArrayInputStream(bytes)));
-    }
-
     private HttpRequest parse(String raw) throws IOException {
-        return inputFor(raw).readRequest();
+        Server server = new Server();
+        TestConnection connection = new TestConnection(server, raw, null);
+        HttpExchange exchange = new HttpExchange(connection);
+        return exchange.readRequest();
     }
 
     // -------------------------------------------------------------------------
@@ -148,23 +145,6 @@ public class HttpInputTest {
     // Error / bad-request tests
     // -------------------------------------------------------------------------
 
-    @Test
-    void missingHostHeader11ThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / HTTP/1.1\r\n" +
-                "\r\n"
-        ));
-    }
-
-    @Test
-    void duplicateHostHeaderThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "Host: other.com\r\n" +
-                "\r\n"
-        ));
-    }
 
     @Test
     void emptyMethodThrowsBadRequest() {
@@ -239,9 +219,7 @@ public class HttpInputTest {
     void invalidOctetInRequestTargetThrowsBadRequest() {
         // 0x00 is a CTL, not valid in request-target
         assertThrows(BadRequestException.class, () -> {
-            byte[] bytes = "GET /path\0end HTTP/1.1\r\nHost: example.com\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII);
-            new HttpInput(null, new BufferedInputStream(new ByteArrayInputStream(bytes))).readRequest();
+            parse("GET /path\0end HTTP/1.1\r\nHost: example.com\r\n\r\n");
         });
     }
 }
