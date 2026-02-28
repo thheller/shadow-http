@@ -27,6 +27,17 @@ public class HttpExchange implements Exchange {
     // not sure anything valid will ever send that
     private static final int MAX_HEADERS = 200;
 
+    // Lookup table for tchar: avoids branch-heavy switch per byte
+    private static final boolean[] TCHAR = new boolean[256];
+    static {
+        for (char c = 'A'; c <= 'Z'; c++) TCHAR[c] = true;
+        for (char c = 'a'; c <= 'z'; c++) TCHAR[c] = true;
+        for (char c = '0'; c <= '9'; c++) TCHAR[c] = true;
+        for (char c : new char[]{'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'}) {
+            TCHAR[c] = true;
+        }
+    }
+
     private final StringBuilder buf = new StringBuilder(256);
 
     final Connection connection;
@@ -719,41 +730,19 @@ public class HttpExchange implements Exchange {
      * tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
      * "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
      */
-    private static boolean isTchar(int b) {
-        if (b >= 'A' && b <= 'Z') return true;
-        if (b >= 'a' && b <= 'z') return true;
-        if (b >= '0' && b <= '9') return true;
-        switch (b) {
-            case '!':
-            case '#':
-            case '$':
-            case '%':
-            case '&':
-            case '\'':
-            case '*':
-            case '+':
-            case '-':
-            case '.':
-            case '^':
-            case '_':
-            case '`':
-            case '|':
-            case '~':
-                return true;
-            default:
-                return false;
-        }
+    public static boolean isTchar(int b) {
+        return b >= 0 && b < 256 && TCHAR[b];
     }
 
     /**
      * VCHAR = %x21-7E
      * obs-text = %x80-FF
      */
-    private static boolean isFieldVchar(int b) {
+    public static boolean isFieldVchar(int b) {
         return (b >= 0x21 && b <= 0x7E) || (b >= 0x80 && b <= 0xFF);
     }
 
-    private static boolean isOws(char c) {
+    public static boolean isOws(char c) {
         return c == SP || c == HTAB;
     }
 }
