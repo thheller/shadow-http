@@ -61,7 +61,7 @@
     ;; set all other headers
     (doseq [[k v] headers]
       (if (string? v)
-        (.setHeader request k v)
+        (.setResponseHeader request k v)
         ;; ring allows header values to be vectors of strings
         (throw (ex-info "currently not supporting header vector values" {:header k :value v}))))
 
