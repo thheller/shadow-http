@@ -25,10 +25,6 @@ public class Server {
         this.config = config;
     }
 
-    public void setHandler(HttpHandler handler) {
-        this.handler = handler;
-    }
-
     void handle(HttpRequest request) throws IOException {
         handler.handle(request);
     }
@@ -59,6 +55,10 @@ public class Server {
 
     public Config getConfig() {
         return config;
+    }
+
+    public void setHandler(HttpHandler handler) {
+        this.handler = handler;
     }
 
     public void stop() throws IOException, InterruptedException {

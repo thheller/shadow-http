@@ -11,8 +11,6 @@ import java.time.format.DateTimeFormatter;
 
 public class FileHandler implements HttpHandler {
 
-    public static final ZoneId GMT = ZoneId.of("GMT");
-    public static final DateTimeFormatter LAST_MODIFIED_FORMATTER = DateTimeFormatter.RFC_1123_DATE_TIME;
     final Path root;
 
     public FileHandler(Path root) {
@@ -60,54 +58,9 @@ public class FileHandler implements HttpHandler {
             return;
         }
 
-        final Server server = request.exchange.connection.getServer();
-        final FileTime lastModifiedTime = Files.getLastModifiedTime(file);
-        final String lastModified = LAST_MODIFIED_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
-
-        final String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
-        if (lastModified.equals(ifModifiedSince)) {
-            request.respondNoContent();
-        } else {
-            long size = Files.size(file);
-
-            // FIXME: maybe support range requests?
-
-            // FIXME: don't do this per request. cache in FileInfo
-            String mimeType = server.config.guessMimeType(file.getFileName().toString());
-
-            // FIXME: config option
-            boolean compress = size >= 850 && server.config.isCompressible(mimeType);
-
-            request.setResponseStatus(200);
-            request.setResponseHeader("content-type", mimeType);
-
-            if (compress) {
-                request.autoCompress = true;
-                request.autoChunk = true;
-            } else {
-                request.autoCompress = false;
-                request.responseLength = size;
-            }
-
-            // FIXME: configurable caching options
-            // this is soft-cache, allows using cache but forces client to check
-            // replying with 304 as above, so we don't send body again
-            // this isn't ideal, but this is not a production server and during
-            // dev files may change often and we never want stale files (e.g. shadow-cljs JS outputs)
-            request.setResponseHeader("cache-control", "private, no-cache");
-            request.setResponseHeader("last-modified", lastModified);
-
-            // HEAD requests get headers but not body
-            if ("GET".equals(request.requestMethod)) {
-                // using the outputBufferSize since we want to fill that asap, might as well do it all at once
-                try (InputStream in = new BufferedInputStream(Files.newInputStream(file), server.config.outputBufferSize)) {
-                    request.writeStream(in);
-                }
-            } else {
-                request.skipBody();
-            }
-        }
+        request.serveFile(file);
     }
+
 
     public static FileHandler forPath(Path root) throws IOException {
         if (!Files.isDirectory(root)) {

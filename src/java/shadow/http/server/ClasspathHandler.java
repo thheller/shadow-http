@@ -16,9 +16,6 @@ import java.time.format.DateTimeFormatter;
  */
 public class ClasspathHandler implements HttpHandler {
 
-    public static final ZoneId GMT = ZoneId.of("GMT");
-    public static final DateTimeFormatter LAST_MODIFIED_FORMATTER = DateTimeFormatter.RFC_1123_DATE_TIME;
-
     private final ClassLoader classLoader;
     private final String prefix;
 
@@ -96,8 +93,8 @@ public class ClasspathHandler implements HttpHandler {
 
         long lastModifiedMillis = conn.getLastModified();
         String lastModified = lastModifiedMillis > 0
-                ? LAST_MODIFIED_FORMATTER.format(
-                new java.util.Date(lastModifiedMillis).toInstant().atZone(GMT))
+                ? HttpRequest.DATE_FORMATTER.format(
+                new java.util.Date(lastModifiedMillis).toInstant().atZone(HttpRequest.GMT))
                 : null;
 
         if (lastModified != null) {

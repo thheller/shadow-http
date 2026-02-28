@@ -1,16 +1,25 @@
 package shadow.http.server;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.zip.GZIPOutputStream;
 
 public class HttpRequest {
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+    public static final ZoneId GMT = ZoneId.of("GMT");
+    public static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.RFC_1123_DATE_TIME;
 
     public enum State {
         PENDING,
@@ -324,6 +333,62 @@ public class HttpRequest {
         }
 
         return responseOut;
+    }
+
+    /**
+     * utility method to serve files from disk
+     *
+     * @param file must be regular readable file
+     * @throws IOException
+     */
+    public void serveFile(Path file) throws IOException {
+        final Server server = exchange.connection.getServer();
+        final FileTime lastModifiedTime = Files.getLastModifiedTime(file);
+        final String lastModified = DATE_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
+
+        final String ifModifiedSince = getRequestHeaderValue("if-modified-since");
+        if (lastModified.equals(ifModifiedSince)) {
+            respondNoContent();
+        } else {
+            long size = Files.size(file);
+
+            // FIXME: maybe support range requests?
+
+            // FIXME: don't do this per request. cache in FileInfo
+            String mimeType = server.config.guessMimeType(file.getFileName().toString());
+
+            // FIXME: config option
+            boolean compress = size >= 850 && server.config.isCompressible(mimeType);
+
+            setResponseStatus(200);
+            setResponseHeader("content-type", mimeType);
+
+            if (compress) {
+                autoCompress = true;
+                autoChunk = true;
+            } else {
+                autoCompress = false;
+                responseLength = size;
+            }
+
+            // FIXME: configurable caching options
+            // this is soft-cache, allows using cache but forces client to check
+            // replying with 304 as above, so we don't send body again
+            // this isn't ideal, but this is not a production server and during
+            // dev files may change often and we never want stale files (e.g. shadow-cljs JS outputs)
+            setResponseHeader("cache-control", "private, no-cache");
+            setResponseHeader("last-modified", lastModified);
+
+            // HEAD requests get headers but not body
+            if ("GET".equals(requestMethod)) {
+                // using the outputBufferSize since we want to fill that asap, might as well do it all at once
+                try (InputStream in = new BufferedInputStream(Files.newInputStream(file), server.config.outputBufferSize)) {
+                    writeStream(in);
+                }
+            } else {
+                skipBody();
+            }
+        }
     }
 
     void beginResponse() throws IOException {
