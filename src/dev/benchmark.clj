@@ -3,8 +3,8 @@
     [clj-async-profiler.core :as prof]
     [criterium.core :as crit])
   (:import
-    [java.io OutputStream]
-    [shadow.http.server FileHandler HttpExchange Server TestConnection]))
+    [java.io ByteArrayOutputStream OutputStream]
+    [shadow.http.server FileHandler HttpExchange HttpHandler Server TestConnection]))
 
 (defn time* [^long duration-in-ms f]
   (let [^com.sun.management.ThreadMXBean bean (java.lang.management.ManagementFactory/getThreadMXBean)
@@ -43,31 +43,44 @@ as the first argument. Returns the returned value of the FIRST iteration."
                           [2000 (cons ?duration-in-ms body)])]
     `(time* ~duration (fn [] ~@body))))
 
-(defn run [& args]
-  (let [server (Server.)
+(set! *warn-on-reflection* true)
 
-        files (-> (FileHandler/forPath "docs")
-                  (.findFiles))
+(defn run [& args]
+  (let [server
+        (Server.)
 
         request
-        (str "GET /rfc9112.txt HTTP/1.1\r\n"
+        (str "GET / HTTP/1.1\r\n"
              "Host: example.com\r\n"
              "\r\n")
 
+        handler
+        (reify
+          HttpHandler
+          (handle [this request]
+            (doto request
+              (.setResponseStatus 200)
+              (.setResponseHeader "content-type" "text/plain")
+              (.writeString "ok!"))))
+
         task
-        (fn []
-          (let [c (TestConnection. server request (OutputStream/nullOutputStream))
+        (fn [^OutputStream out]
+          (let [c (TestConnection. server request out)
                 ex (HttpExchange. c)]
             (.process ex)))]
 
-    (.setHandler server files)
+    (.setHandler server handler)
 
-    (task)
+    (with-open [out (ByteArrayOutputStream.)]
+      (task out)
+      (println (.toString out)))
 
     (prof/serve-ui 5010)
 
+    (prn :starting)
     (prof/profile
-      (dotimes [i 10000]
-        (task)
+      (dotimes [i 100000]
+        (task (OutputStream/nullOutputStream))
         ))
+    (prn :done)
     ))
