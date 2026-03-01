@@ -50,9 +50,11 @@ as the first argument. Returns the returned value of the FIRST iteration."
         (Server.)
 
         request
-        (str "GET / HTTP/1.1\r\n"
-             "Host: example.com\r\n"
-             "\r\n")
+        (.repeat
+          (str "GET / HTTP/1.1\r\n"
+               "Host: example.com\r\n"
+               "\r\n")
+          1000)
 
         handler
         (reify
@@ -79,7 +81,7 @@ as the first argument. Returns the returned value of the FIRST iteration."
 
     (prn :starting)
     (prof/profile
-      (dotimes [i 100000]
+      (dotimes [i 10000]
         (task (OutputStream/nullOutputStream))
         ))
     (prn :done)
