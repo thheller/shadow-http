@@ -6,7 +6,7 @@
     [java.io InputStream File]
     [java.nio ByteBuffer]
     [shadow.http.server
-     HttpHandler HttpRequest HttpResponse
+     HttpHandler HttpRequest
      WebSocketConnection WebSocketHandler]))
 
 (defn build-request-map
