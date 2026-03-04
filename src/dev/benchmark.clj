@@ -70,19 +70,17 @@ as the first argument. Returns the returned value of the FIRST iteration."
           (let [c (TestConnection. server request out)
                 ex (HttpExchange. c)]
             (.process ex)))]
-
     (.setHandler server handler)
 
     (with-open [out (ByteArrayOutputStream.)]
       (task out)
-      (println (.toString out)))
+      ;; (println (.toString out))
+      )
 
-    (prof/serve-ui 5010)
+    ;; (prof/serve-ui 5010)
 
     (prn :starting)
-    (prof/profile
-      (dotimes [i 10000]
-        (task (OutputStream/nullOutputStream))
-        ))
+    (crit/quick-bench
+      (task (OutputStream/nullOutputStream)))
     (prn :done)
     ))
