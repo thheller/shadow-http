@@ -6,6 +6,8 @@ public/css
 /checkouts
 /src/gen
 
+ssl/
+
 *.iml
 *.jar
 *.log

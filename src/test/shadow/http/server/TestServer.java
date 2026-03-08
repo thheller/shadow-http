@@ -1,5 +1,6 @@
 package shadow.http.server;
 
+import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -44,7 +45,10 @@ public class TestServer {
 
         Server server = new Server();
         server.setHandler(HandlerList.create(files, cp1, cp2, test));
-        server.start(5007);
+        // server.start(5007);
+
+        SSLContext ctx = Server.sslContextForP12("ssl/localhost.p12");
+        server.startSSL(ctx, 5017);
 
         System.out.println("Server started on http://localhost:5007");
     }

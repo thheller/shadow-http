@@ -3,7 +3,10 @@
     [clojure.core.async :as async]
     [shadow.http.server.ring :as ring])
   (:import
+    [java.io FileInputStream]
+    [java.security KeyStore]
     [java.util List]
+    [javax.net.ssl KeyManagerFactory SSLContext]
     [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketHandler]))
 
 (defmacro vthread [& body]
@@ -50,7 +53,13 @@
   ([ws-in ws-out ws-loop]
    {::handler (CoreAsyncWebSocketHandler. nil nil ws-in ws-out ws-loop)}))
 
-(defn start [{:keys [host port] :as config} handler]
+(defn ssl-context-for-p12
+  ([path-to-p12]
+   (Server/sslContextForP12 path-to-p12))
+  ([path-to-p12 password]
+   (Server/sslContextForP12 path-to-p12 password)))
+
+(defn start [{:keys [host port ssl-context] :as config} handler]
   (let [server (Server.)]
     (cond
       (seq handler)
@@ -61,10 +70,17 @@
 
       :else
       (throw (ex-info "invalid handler" {:handler handler})))
-    (.start server (or host "0.0.0.0") port)
-    {:config config
-     :server server
-     :port (.getLocalPort (.getSocket server))}))
+
+    (if ssl-context
+      (.startSSL server ssl-context (or host "0.0.0.0") port)
+      (.start server (or host "0.0.0.0") port))
+
+    (cond->
+      {:config config
+       :server server
+       :port (.getLocalPort (.getSocket server))}
+      ssl-context
+      (assoc :ssl true))))
 
 (defn stop [{:keys [^Server server] :as svc}]
   (.stop server)

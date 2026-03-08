@@ -9,6 +9,8 @@ public class Config {
     final Map<String, String> mimeTypes = new HashMap<>();
     final Set<String> compressibleTypes = new HashSet<>();
 
+    public static Config DEFAULT = new Config();
+
     // directly affects how much memory each connection uses
     // larger input isn't all that relevant
     // larger output means better performance for larger responses
