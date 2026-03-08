@@ -2,6 +2,7 @@ package shadow.http.server;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -141,18 +142,10 @@ public class Server {
         }
     }
 
-    public static SSLContext sslContextForP12(String pathToFile) throws Exception {
-        return sslContextForP12(pathToFile, "changeit");
-    }
-
-    // utility method for loading .p12 file created by mkcert -pkcs12 localhost
-    public static SSLContext sslContextForP12(String pathToFile, String password) throws Exception {
+    public static SSLContext sslContextForFile(String pathToFile, String password) throws Exception {
         char[] pwa = password.toCharArray();
 
-        KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        try (FileInputStream fis = new FileInputStream(pathToFile)) {
-            keyStore.load(fis, pwa);
-        }
+        KeyStore keyStore = KeyStore.getInstance(new File(pathToFile), pwa);
 
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         kmf.init(keyStore, pwa);

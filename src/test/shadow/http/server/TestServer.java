@@ -47,7 +47,8 @@ public class TestServer {
         server.setHandler(HandlerList.create(files, cp1, cp2, test));
         // server.start(5007);
 
-        SSLContext ctx = Server.sslContextForP12("ssl/localhost.p12");
+        // SSLContext ctx = Server.sslContextForFile("ssl/localhost.p12", "changeit");
+        SSLContext ctx = Server.sslContextForFile("ssl/keystore.jks", "changeit");
         server.startSSL(ctx, 5017);
 
         System.out.println("Server started on http://localhost:5007");

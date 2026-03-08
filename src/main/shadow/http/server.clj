@@ -53,11 +53,11 @@
   ([ws-in ws-out ws-loop]
    {::handler (CoreAsyncWebSocketHandler. nil nil ws-in ws-out ws-loop)}))
 
-(defn ssl-context-for-p12
-  ([path-to-p12]
-   (Server/sslContextForP12 path-to-p12))
-  ([path-to-p12 password]
-   (Server/sslContextForP12 path-to-p12 password)))
+(defn ssl-context-for-file
+  ([path]
+   (Server/sslContextForFile path "changeit"))
+  ([path password]
+   (Server/sslContextForFile path password)))
 
 (defn start [{:keys [host port ssl-context] :as config} handler]
   (let [server (Server.)]
