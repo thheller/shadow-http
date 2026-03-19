@@ -2,224 +2,411 @@ package shadow.http.server;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class HttpInputTest {
 
-    private HttpRequest parse(String raw) throws IOException {
-        Server server = new Server();
-        TestConnection connection = new TestConnection(server, raw, null);
-        HttpExchange exchange = new HttpExchange(connection);
-        return exchange.readRequest();
+    private static HttpInput httpInput(int bufferSize, String... chunks) {
+        return new HttpInput(new ChunkingInputStream(false, chunks), bufferSize);
     }
 
-    // -------------------------------------------------------------------------
-    // Happy-path tests
-    // -------------------------------------------------------------------------
+    private static HttpInput httpInputWithUnavailableStream(int bufferSize, String... chunks) {
+        return new HttpInput(new ChunkingInputStream(true, chunks), bufferSize);
+    }
 
     @Test
-    void simpleGetRequest() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
+    void parsesRequestLineAndHeadersAcrossSmallBuffer() throws IOException {
+        HttpInput input = httpInput(
+                32,
+                "GET /hello/wo",
+                "rld?x=1 HTTP/1",
+                ".1\r\nHost: Ex",
+                "ample.com\r\nX-",
+                "Test:\t  some value \t\r",
+                "\n\r\nbo",
+                "dy"
+        );
+
+        assertEquals("GET", input.readMethod());
+        assertEquals("/hello/world?x=1", input.readTarget());
+        assertEquals("HTTP/1.1", input.readVersion());
+
+        Header host = input.readHeader();
+        assertEquals("Host", host.nameIn);
+        assertEquals("host", host.name);
+        assertEquals("Example.com", host.value);
+
+        Header xTest = input.readHeader();
+        assertEquals("X-Test", xTest.nameIn);
+        assertEquals("x-test", xTest.name);
+        assertEquals("some value", xTest.value);
+
+        assertNull(input.readHeader());
+        assertEquals("body", new String(input.readAllBytes(), StandardCharsets.ISO_8859_1));
+    }
+
+    @Test
+    void skipsLeadingEmptyLinesBeforeMethod() throws IOException {
+        HttpInput input = httpInput(8, "\r", "\n\nGE", "T / HT", "TP/1.1\r", "\n\r\n");
+
+        assertEquals("GET", input.readMethod());
+        assertEquals("/", input.readTarget());
+        assertEquals("HTTP/1.1", input.readVersion());
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void acceptsBareLfLineTerminators() throws IOException {
+        HttpInput input = httpInput(
+                32,
+                "GET / H",
+                "TTP/1.1\nHo",
+                "st: example",
+                ".com\n\n"
+        );
+
+        assertEquals("GET", input.readMethod());
+        assertEquals("/", input.readTarget());
+        assertEquals("HTTP/1.1", input.readVersion());
+
+        Header host = input.readHeader();
+        assertEquals("Host", host.nameIn);
+        assertEquals("host", host.name);
+        assertEquals("example.com", host.value);
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void preservesLatin1HeaderValues() throws IOException {
+        HttpInput input = httpInput(
+                8,
+                "GET / HT",
+                "TP/1.1\r\nX-",
+                "Name: caf\u00e9",
+                "\r\n\r\n"
+        );
+
+        input.readMethod();
+        input.readTarget();
+        input.readVersion();
+
+        Header header = input.readHeader();
+        assertEquals("caf\u00e9", header.value);
+    }
+
+    @Test
+    void rejectsEmptyMethodToken() {
+        HttpInput input = httpInput(8, " ", "/ HTTP/", "1.1\r\n\r\n");
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readMethod);
+        assertEquals("Empty method token", error.getMessage());
+    }
+
+    @Test
+    void rejectsInvalidOctetInMethodToken() {
+        HttpInput input = httpInput(8, "GE", "(T / HT", "TP/1.1\r\n\r\n");
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readMethod);
+        assertEquals("Invalid octet in method token: 0x28", error.getMessage());
+    }
+
+    @Test
+    void rejectsEmptyRequestTarget() throws IOException {
+        HttpInput input = httpInput(8, "GET ", " HTTP/", "1.1\r\n\r\n");
+        input.readMethod();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readTarget);
+        assertEquals("Empty request-target", error.getMessage());
+    }
+
+    @Test
+    void rejectsControlCharacterInRequestTarget() throws IOException {
+        HttpInput input = httpInput(8, "GET /bad", "\u007ftarget H", "TTP/1.1\r\n\r\n");
+        input.readMethod();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readTarget);
+        assertEquals("Invalid octet in request-target: 0x7f", error.getMessage());
+    }
+
+    @Test
+    void rejectsInvalidHttpVersionPrefix() throws IOException {
+        HttpInput input = httpInput(8, "GET / H", "TTX/1.1\r", "\n\r\n");
+        input.readMethod();
+        input.readTarget();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readVersion);
+        assertEquals("Invalid HTTP-version: expected 'P' but got 0x58", error.getMessage());
+    }
+
+    @Test
+    void rejectsWhitespaceBeforeHeaderColon() throws IOException {
+        HttpInput input = httpInput(
+                8,
+                "GET / HT",
+                "TP/1.1\r\nHo",
+                "st : exa",
+                "mple.com\r\n\r\n"
+        );
+        input.readMethod();
+        input.readTarget();
+        input.readVersion();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readHeader);
+        assertEquals("Whitespace between header field name and colon is not allowed", error.getMessage());
+    }
+
+    @Test
+    void rejectsBareCrBeforeRequestLine() {
+        HttpInput input = httpInput(8, "\rG", "ET / HT", "TP/1.1\r\n\r\n");
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readMethod);
+        assertEquals("Invalid bare CR before request-line", error.getMessage());
+    }
+
+    @Test
+    void rejectsTooLongHeaderLineForBuffer() throws IOException {
+        HttpInput input = httpInput(
+                8,
+                "GET / HT",
+                "TP/1.1\r\nVe",
+                "ryLongHe",
+                "ader: va",
+                "lue\r\n\r\n"
+        );
+        input.readMethod();
+        input.readTarget();
+        input.readVersion();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readHeader);
+        assertEquals("HTTP header line does not fit into the input buffer", error.getMessage());
+    }
+
+    @Test
+    void throwsEofWhenRequestLineEndsUnexpectedly() throws IOException {
+        HttpInput input = httpInput(8, "GET / HT", "TP/1", ".");
+        input.readMethod();
+        input.readTarget();
+
+        EOFException error = assertThrows(EOFException.class, input::readVersion);
+        assertEquals("Unexpected end of stream", error.getMessage());
+    }
+
+    @Test
+    void readByteArrayReturnsBufferedBodyBeforePollingUnderlyingStream() throws IOException {
+        HttpInput input = httpInputWithUnavailableStream(
+                8,
+                "GET / HT",
+                "TP/1.1\r\n",
+                "\r\nhell",
+                "o wor",
+                "ld"
+        );
+        input.readMethod();
+        input.readTarget();
+        input.readVersion();
+        assertNull(input.readHeader());
+
+        byte[] bytes = new byte[32];
+        int read = input.read(bytes, 0, bytes.length);
+
+        assertEquals(4, read);
+        assertArrayEquals("hell".getBytes(StandardCharsets.ISO_8859_1), copy(bytes, read));
+
+        int secondRead = input.read(bytes, 0, bytes.length);
+        assertEquals(5, secondRead);
+        assertArrayEquals("o wor".getBytes(StandardCharsets.ISO_8859_1), copy(bytes, secondRead));
+
+        int thirdRead = input.read(bytes, 0, bytes.length);
+        assertEquals(2, thirdRead);
+        assertArrayEquals("ld".getBytes(StandardCharsets.ISO_8859_1), copy(bytes, thirdRead));
+    }
+
+    @Test
+    void skipAndAvailableReflectRemainingBodyBytes() throws IOException {
+        HttpInput input = httpInput(8, "GET / HT", "TP/1.1\r\n", "\r\nabc", "def");
+
+        input.readMethod();
+        input.readTarget();
+        input.readVersion();
+        assertNull(input.readHeader());
+
+        assertEquals(6, input.available());
+        assertEquals(2, input.skip(2));
+        assertEquals(4, input.available());
+        assertEquals('c', input.read());
+        assertEquals("def", new String(input.readAllBytes(), StandardCharsets.ISO_8859_1));
+        assertEquals(0, input.available());
+        assertEquals(-1, input.read());
+    }
+
+    @Test
+    void markResetIsNotSupported() throws IOException {
+        HttpInput input = httpInput(8, "GET / HT", "TP/1.1\r\n", "\r\n");
+
+        assertFalse(input.markSupported());
+        assertThrows(IOException.class, input::reset);
+    }
+
+    @Test
+    void readsChunkedBodyWithExtensionsAndTrailersAcrossSmallBuffers() throws IOException {
+        HttpInput input = httpInput(
+                16,
+                "4;foo=",
+                "bar\r\nWi",
+                "ki\r\n5",
+                "; baz =",
+                " \"qux\"",
+                "\r\npedi",
+                "a\r\n0;",
+                "done\r\n",
+                "X-Trai",
+                "ler: y",
+                "es\r\nAn",
+                "other:",
+                " ok\r\n",
                 "\r\n"
         );
-        assertEquals("GET", req.requestMethod);
-        assertEquals("/", req.requestTarget);
-        assertEquals("HTTP/1.1", req.requestVersion);
-        assertEquals(1, req.requestHeadersInOrder.size());
-        assertEquals("Host", req.requestHeadersInOrder.get(0).nameIn);
-        assertEquals("host", req.requestHeadersInOrder.get(0).name);
-        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
+
+        Chunk first = input.readChunk(16);
+        assertFalse(first.isLast());
+        assertArrayEquals("Wiki".getBytes(StandardCharsets.ISO_8859_1), first.data());
+        assertEquals("bar", first.extensions().get("foo"));
+        assertTrue(first.trailers().isEmpty());
+
+        Chunk second = input.readChunk(16);
+        assertFalse(second.isLast());
+        assertArrayEquals("pedia".getBytes(StandardCharsets.ISO_8859_1), second.data());
+        assertEquals("qux", second.extensions().get("baz"));
+        assertTrue(second.trailers().isEmpty());
+
+        Chunk last = input.readChunk(16);
+        assertTrue(last.isLast());
+        assertTrue(last.data().length == 0);
+        assertNull(last.extensions().get("done"));
+        assertEquals(2, last.trailers().size());
+        assertEquals("x-trailer", last.trailers().get(0).name);
+        assertEquals("yes", last.trailers().get(0).value);
+        assertEquals("another", last.trailers().get(1).name);
+        assertEquals("ok", last.trailers().get(1).value);
     }
 
     @Test
-    void postRequestWithMultipleHeaders() throws IOException {
-        HttpRequest req = parse(
-                "POST /submit HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Content-Length: 42\r\n" +
-                "\r\n"
-        );
-        assertEquals("POST", req.requestMethod);
-        assertEquals("/submit", req.requestTarget);
-        assertEquals(3, req.requestHeadersInOrder.size());
+    void rejectsChunkLargerThanConfiguredMaximum() {
+        HttpInput input = httpInput(8, "A\r\n", "0123456789\r\n");
+
+        BadRequestException error = assertThrows(BadRequestException.class, () -> input.readChunk(9));
+        assertEquals("Chunk size too large: 10", error.getMessage());
     }
 
-    @Test
-    void methodIsUpperCased() throws IOException {
-        HttpRequest req = parse(
-                "get / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        );
-        assertEquals("GET", req.requestMethod);
+    private static byte[] copy(byte[] bytes, int length) {
+        byte[] copy = new byte[length];
+        System.arraycopy(bytes, 0, copy, 0, length);
+        return copy;
     }
 
-    @Test
-    void http10RequestDoesNotRequireHost() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.0\r\n" +
-                "\r\n"
-        );
-        assertEquals("HTTP/1.0", req.requestVersion);
-        assertTrue(req.requestHeadersInOrder.isEmpty());
-    }
+    private static final class ChunkingInputStream extends InputStream {
 
-    @Test
-    void leadingCrlfAreSkipped() throws IOException {
-        HttpRequest req = parse(
-                "\r\n\r\n" +
-                "GET / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        );
-        assertEquals("GET", req.requestMethod);
-    }
+        private final byte[][] chunks;
+        private final boolean zeroAvailable;
+        private int chunkIndex;
+        private int chunkOffset;
 
-    @Test
-    void headerValueOwsIsStripped() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.1\r\n" +
-                "Host:   example.com   \r\n" +
-                "\r\n"
-        );
-        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
-    }
+        private ChunkingInputStream(boolean zeroAvailable, String... chunks) {
+            this.zeroAvailable = zeroAvailable;
+            this.chunks = new byte[chunks.length][];
+            for (int i = 0; i < chunks.length; i++) {
+                this.chunks[i] = chunks[i].getBytes(StandardCharsets.ISO_8859_1);
+            }
+        }
 
-    @Test
-    void headerNameIsPreservedCaseButLowercaseAvailable() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.1\r\n" +
-                "X-Custom-Header: value\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        );
-        Header h = req.requestHeadersInOrder.get(0);
-        assertEquals("X-Custom-Header", h.nameIn);
-        assertEquals("x-custom-header", h.name);
-    }
+        @Override
+        public int read() {
+            advanceChunk();
+            if (chunkIndex >= chunks.length) {
+                return -1;
+            }
 
-    @Test
-    void bareLfRecognizedAsLineTerminator() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.1\n" +
-                "Host: example.com\n" +
-                "\n"
-        );
-        assertEquals("GET", req.requestMethod);
-        assertEquals("example.com", req.requestHeadersInOrder.get(0).value);
-    }
+            return chunks[chunkIndex][chunkOffset++] & 0xFF;
+        }
 
-    @Test
-    void obsFoldReplacedWithSingleSpace() throws IOException {
-        HttpRequest req = parse(
-                "GET / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "X-Folded: first\r\n" +
-                "  continuation\r\n" +
-                "\r\n"
-        );
-        Header folded = req.requestHeadersInOrder.get(1);
-        assertEquals("first continuation", folded.value);
-    }
+        @Override
+        public int read(byte[] bytes, int off, int len) {
+            if (bytes == null) {
+                throw new NullPointerException("bytes");
+            }
+            if (off < 0 || len < 0 || len > bytes.length - off) {
+                throw new IndexOutOfBoundsException();
+            }
+            if (len == 0) {
+                return 0;
+            }
 
-    @Test
-    void complexRequestTarget() throws IOException {
-        HttpRequest req = parse(
-                "GET /path?query=1&other=2#frag HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        );
-        assertEquals("/path?query=1&other=2#frag", req.requestTarget);
-    }
+            advanceChunk();
+            if (chunkIndex >= chunks.length) {
+                return -1;
+            }
 
-    // -------------------------------------------------------------------------
-    // Error / bad-request tests
-    // -------------------------------------------------------------------------
+            byte[] chunk = chunks[chunkIndex];
+            int copy = Math.min(len, chunk.length - chunkOffset);
+            System.arraycopy(chunk, chunkOffset, bytes, off, copy);
+            chunkOffset += copy;
+            return copy;
+        }
 
+        @Override
+        public long skip(long n) {
+            if (n <= 0) {
+                return 0;
+            }
 
-    @Test
-    void emptyMethodThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                " / HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        ));
-    }
+            long skipped = 0;
+            while (skipped < n) {
+                advanceChunk();
+                if (chunkIndex >= chunks.length) {
+                    return skipped;
+                }
 
-    @Test
-    void emptyRequestTargetThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET  HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        ));
-    }
+                int remaining = chunks[chunkIndex].length - chunkOffset;
+                int chunkSkip = (int) Math.min(n - skipped, remaining);
+                chunkOffset += chunkSkip;
+                skipped += chunkSkip;
+            }
 
-    @Test
-    void invalidHttpVersionPrefixThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / XTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        ));
-    }
+            return skipped;
+        }
 
-    @Test
-    void invalidMajorVersionDigitThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / HTTP/X.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        ));
-    }
+        @Override
+        public int available() {
+            if (zeroAvailable) {
+                return 0;
+            }
 
-    @Test
-    void whitespaceBetweenHeaderNameAndColonThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / HTTP/1.1\r\n" +
-                "Host : example.com\r\n" +
-                "\r\n"
-        ));
-    }
+            int available = 0;
+            for (int i = chunkIndex; i < chunks.length; i++) {
+                if (i == chunkIndex) {
+                    available += chunks[i].length - chunkOffset;
+                } else {
+                    available += chunks[i].length;
+                }
+            }
+            return available;
+        }
 
-    @Test
-    void missingColonAfterHeaderNameThrowsBadRequest() {
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET / HTTP/1.1\r\n" +
-                "HostXexample.com\r\n" +
-                "\r\n"
-        ));
-    }
-
-    @Test
-    void requestTargetTooLongThrowsBadRequest() {
-        String longTarget = "/".repeat(8001);
-        assertThrows(BadRequestException.class, () -> parse(
-                "GET " + longTarget + " HTTP/1.1\r\n" +
-                "Host: example.com\r\n" +
-                "\r\n"
-        ));
-    }
-
-    @Test
-    void unexpectedEofThrowsEofException() {
-        assertThrows(EOFException.class, () -> parse("GET /"));
-    }
-
-    @Test
-    void invalidOctetInRequestTargetThrowsBadRequest() {
-        // 0x00 is a CTL, not valid in request-target
-        assertThrows(BadRequestException.class, () -> {
-            parse("GET /path\0end HTTP/1.1\r\nHost: example.com\r\n\r\n");
-        });
+        private void advanceChunk() {
+            while (chunkIndex < chunks.length && chunkOffset >= chunks[chunkIndex].length) {
+                chunkIndex++;
+                chunkOffset = 0;
+            }
+        }
     }
 }

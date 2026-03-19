@@ -173,7 +173,9 @@ public class HttpRequest {
 
             skipBody();
 
-            exchange.connection.upgrade(new WebSocketExchange(exchange.connection, handler, pmd));
+            // must make sure that websocket continues reading from exchange.in and doesn't try connection.getInputStream()
+            // since in may still have bytes available
+            exchange.connection.upgrade(new WebSocketExchange(exchange.connection, exchange.in, handler, pmd));
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-1 not available", e);
         }

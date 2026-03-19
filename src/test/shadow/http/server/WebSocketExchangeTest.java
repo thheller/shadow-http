@@ -375,7 +375,7 @@ public class WebSocketExchangeTest {
 
         TestConnection con = new TestConnection(server, clientIn, serverOut);
 
-        WebSocketExchange exchange = new WebSocketExchange(con, handler, compression);
+        WebSocketExchange exchange = new WebSocketExchange(con, clientIn, handler, compression);
         exchange.process();
 
         return serverOut.toByteArray();

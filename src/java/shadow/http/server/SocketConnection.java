@@ -9,9 +9,6 @@ public class SocketConnection implements Connection, Runnable {
     final Server server;
     final Socket socket;
 
-    InputStream socketIn;
-    OutputStream socketOut;
-
     Exchange exchange;
 
     public SocketConnection(Server server, Socket socket) {
@@ -26,12 +23,12 @@ public class SocketConnection implements Connection, Runnable {
 
     @Override
     public InputStream getInputStream() throws IOException {
-        return socketIn;
+        return socket.getInputStream();
     }
 
     @Override
     public OutputStream getOutputStream() throws IOException {
-        return socketOut;
+        return socket.getOutputStream();
     }
 
     @Override
@@ -49,9 +46,6 @@ public class SocketConnection implements Connection, Runnable {
             // disable Nagle's algorithm - we already buffer at the application level
             // with BufferedOutputStream, so Nagle just adds unnecessary latency on flush
             socket.setTcpNoDelay(true);
-
-            this.socketIn = new BufferedInputStream(socket.getInputStream(), server.config.inputBufferSize);
-            this.socketOut = new BufferedOutputStream(socket.getOutputStream(), server.config.outputBufferSize);
 
             // starts out as http, may upgrade into websocket, at which point we don't need http specifics
             // anymore, since there is no downgrade. so keeping everything http related in HttpExchange

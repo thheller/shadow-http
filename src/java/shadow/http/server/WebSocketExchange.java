@@ -13,7 +13,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     private WebSocketHandler handler;
 
-    private final ReentrantLock lock = new ReentrantLock();
+    private final ReentrantLock writeLock = new ReentrantLock();
 
     final InputStream in;
     final OutputStream out;
@@ -28,10 +28,10 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
     int closeStatusCode = 1006; // 1006 = abnormal closure (no close frame received)
     String closeReason = "";
 
-    public WebSocketExchange(Connection connection, WebSocketHandler handler, PerMessageDeflate perMessageDeflate) throws IOException {
+    public WebSocketExchange(Connection connection, InputStream in, WebSocketHandler handler, PerMessageDeflate perMessageDeflate) throws IOException {
         this.connection = connection;
+        this.in = in;
         this.handler = handler;
-        this.in = connection.getInputStream();
         this.out = connection.getOutputStream();
         this.wsIn = new WebSocketInput(this.in, perMessageDeflate);
         this.perMessageDeflate = perMessageDeflate;
@@ -144,12 +144,12 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     @Override
     public void sendText(String text) throws IOException {
-        lock.lock();
+        writeLock.lock();
         try {
             // need to lock in case multiple threads try to send messages
             sendTextInternal(text);
         } finally {
-            lock.unlock();
+            writeLock.unlock();
         }
     }
 
@@ -215,31 +215,31 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     @Override
     public void sendPing(byte[] payload) throws IOException {
-        lock.lock();
+        writeLock.lock();
         try {
             sendFrame(out, true, false, WebSocketFrame.OPCODE_PING, payload, 0, payload.length);
         } finally {
-            lock.unlock();
+            writeLock.unlock();
         }
     }
 
     @Override
     public void sendPong(byte[] payload) throws IOException {
-        lock.lock();
+        writeLock.lock();
         try {
             sendFrame(out, true, false, WebSocketFrame.OPCODE_PONG, payload, 0, payload.length);
         } finally {
-            lock.unlock();
+            writeLock.unlock();
         }
     }
 
     @Override
     public void sendClose(int statusCode) throws IOException {
-        lock.lock();
+        writeLock.lock();
         try {
             sendCloseInternal(statusCode);
         } finally {
-            lock.unlock();
+            writeLock.unlock();
         }
     }
 

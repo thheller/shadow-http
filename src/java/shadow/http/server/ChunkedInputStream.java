@@ -89,7 +89,7 @@ class ChunkedInputStream extends InputStream {
      */
     private boolean ensureChunkData() throws IOException {
         while (currentChunk == null || currentOffset >= currentChunk.length) {
-            Chunk chunk = exchange.readChunk(maxChunkSize);
+            Chunk chunk = exchange.in.readChunk(maxChunkSize);
             if (chunk.isLast()) {
                 eof = true;
                 currentChunk = null;
