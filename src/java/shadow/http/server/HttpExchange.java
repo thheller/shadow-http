@@ -23,7 +23,7 @@ public class HttpExchange implements Exchange {
 
     boolean upgraded = false;
 
-    HttpExchange(Connection connection) throws IOException {
+    public HttpExchange(Connection connection) throws IOException {
         this.since = System.currentTimeMillis();
         this.connection = connection;
         this.in = new HttpInput(connection.getInputStream(), connection.getServer().getConfig().getInputBufferSize());
