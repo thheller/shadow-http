@@ -20,6 +20,7 @@ ssl/
 
 .hgignore
 .hg/
+.vscode/
 
 out/
 tmp/
