@@ -4,12 +4,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
 public class HttpInput extends InputStream {
 
@@ -634,32 +629,31 @@ public class HttpInput extends InputStream {
     }
 
     private String readChunkLine() throws IOException {
-        StringBuilder line = new StringBuilder();
+        int tokenStart = position;
 
         while (true) {
-            int b = readRequiredByte("Unexpected end of stream reading chunk header");
+            tokenStart = ensureTokenByte(tokenStart, "Chunk header line does not fit into the input buffer");
+            int b = buffer[position] & 0xFF;
+
             if (b == LF) {
-                return line.toString();
+                String line = latin1String(tokenStart, position - tokenStart);
+                position++;
+                return line;
             }
 
             if (b == CR) {
-                int next = readRequiredByte("Unexpected end of stream reading chunk header");
-                if (next != LF) {
+                String line = latin1String(tokenStart, position - tokenStart);
+                position++;
+                ensureLookahead(1, "Chunk header line does not fit into the input buffer");
+                if ((buffer[position] & 0xFF) != LF) {
                     throw new BadRequestException("Invalid bare CR in chunk header");
                 }
-                return line.toString();
+                position++;
+                return line;
             }
 
-            line.append((char) b);
+            position++;
         }
-    }
-
-    private int readRequiredByte(String eofMessage) throws IOException {
-        int b = read();
-        if (b == -1) {
-            throw new EOFException(eofMessage);
-        }
-        return b;
     }
 
     private int skipChunkWhitespace(String chunkLine, int index) {
