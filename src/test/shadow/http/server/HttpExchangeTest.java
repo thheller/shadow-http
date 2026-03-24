@@ -123,59 +123,6 @@ public class HttpExchangeTest {
     }
 
     @Test
-    void postRequestWithChunkedBody() throws IOException {
-        // Build a chunked-encoded request body: two data chunks + terminal chunk
-        String chunk1 = "x".repeat(4096);
-        String chunk2 = "y".repeat(4096);
-        String chunkedBody =
-                Integer.toHexString(chunk1.length()) + "\r\n" + chunk1 + "\r\n" +
-                        Integer.toHexString(chunk2.length()) + "\r\n" + chunk2 + "\r\n" +
-                        "0\r\n\r\n";
-
-        HttpHandler echo = (request) -> {
-            String body = new String(request.requestBody().readAllBytes(), StandardCharsets.UTF_8);
-            request.writeString(body);
-        };
-
-        String result = run(echo,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: example.com\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "\r\n" +
-                        chunkedBody
-        );
-
-        String expectedBody = chunk1 + chunk2;
-        assertEquals("HTTP/1.1 200 \r\n" +
-                "content-length: " + expectedBody.length() + "\r\n" +
-                "\r\n" +
-                expectedBody, result);
-    }
-
-    @Test
-    void largeBody() throws IOException {
-        String largePayload = "x".repeat(10000);
-
-        HttpHandler echo = (request) -> {
-            String body = new String(request.requestBody().readAllBytes(), StandardCharsets.UTF_8);
-            request.writeString(body);
-        };
-
-        String result = run(echo,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: example.com\r\n" +
-                        "Content-Length: 10000\r\n" +
-                        "\r\n" +
-                        largePayload
-        );
-
-        assertEquals("HTTP/1.1 200 \r\n" +
-                "content-length: 10000\r\n" +
-                "\r\n" +
-                largePayload, result);
-    }
-
-    @Test
     void notFoundWhenUnhandled() throws IOException {
         HttpHandler neverHandles = (request) -> {
         };

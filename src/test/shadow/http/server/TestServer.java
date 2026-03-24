@@ -4,6 +4,8 @@ import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
 
 public class TestServer {
 
@@ -43,13 +45,16 @@ public class TestServer {
         ClasspathHandler cp1 = ClasspathHandler.forPrefix("/shadow/cljs/ui/dist");
         ClasspathHandler cp2 = ClasspathHandler.forPrefix("/");
 
-        Server server = new Server();
-        server.setHandler(HandlerList.create(files, cp1, cp2, test));
-        // server.start(5007);
+        Server server1 = new Server();
+        server1.setHandler(HandlerList.create(files, cp1, cp2, test));
+        server1.start(5007);
 
         // SSLContext ctx = Server.sslContextForFile("ssl/localhost.p12", "changeit");
         SSLContext ctx = Server.sslContextForFile("ssl/keystore.jks", "changeit");
-        server.startSSL(ctx, 5017);
+        Server server2 = new Server();
+        HttpClient client = HttpClient.newBuilder().build();
+        server2.setHandler(new ProxyHandler(client, URI.create("http://localhost:5007")));
+        server2.startSSL(ctx, 5017);
 
         System.out.println("Server started on http://localhost:5007");
     }

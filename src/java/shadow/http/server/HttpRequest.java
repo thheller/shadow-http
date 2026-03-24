@@ -273,9 +273,6 @@ public class HttpRequest {
                     responseLength = length;
                     autoCompress = false;
                     autoChunk = false;
-                } else {
-                    responseLength = length;
-                    autoChunk = false;
                 }
             }
             beginResponse();
