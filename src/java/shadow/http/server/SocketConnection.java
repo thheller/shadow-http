@@ -1,7 +1,9 @@
 package shadow.http.server;
 
+import javax.net.ssl.SSLSocket;
 import java.io.*;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.SocketException;
 
 public class SocketConnection implements Connection, Runnable {
@@ -29,6 +31,14 @@ public class SocketConnection implements Connection, Runnable {
     @Override
     public OutputStream getOutputStream() throws IOException {
         return socket.getOutputStream();
+    }
+
+    public boolean isSecure() {
+        return socket instanceof SSLSocket;
+    }
+
+    public SocketAddress getRemoteAddress() {
+        return socket.getRemoteSocketAddress();
     }
 
     @Override

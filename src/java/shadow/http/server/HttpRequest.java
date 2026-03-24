@@ -4,6 +4,7 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,7 +61,7 @@ public class HttpRequest {
 
     int responseStatus = 200;
     String responseStatusText = null;
-    public final Map<String, String> responseHeaders = new HashMap<>();
+    public final Map<String, List<String>> responseHeaders = new HashMap<>();
     OutputStream responseOut;
     boolean responseBody = true;
     public long responseBytesWritten = 0;
@@ -75,6 +76,14 @@ public class HttpRequest {
         this.requestMethod = requestMethod;
         this.requestTarget = requestTarget;
         this.requestVersion = requestVersion;
+    }
+
+    public boolean isSecure() {
+        return exchange.connection.isSecure();
+    }
+
+    public SocketAddress getRemoteAddress() {
+        return exchange.connection.getRemoteAddress();
     }
 
     public String getRequestHeaderValue(String name) {
@@ -239,9 +248,15 @@ public class HttpRequest {
     }
 
     public HttpRequest setResponseHeader(String name, String value) {
-        responseHeaders.put(name, value);
+        responseHeaders.put(name, Arrays.asList(value));
         return this;
     }
+
+    public HttpRequest addResponseHeader(String name, String value) {
+        responseHeaders.computeIfAbsent(name, s -> new ArrayList<>()).add(value);
+        return this;
+    }
+
 
     public void skipBody() throws IOException {
         if (state == State.PENDING) {
@@ -394,11 +409,12 @@ public class HttpRequest {
             }
         }
 
-        for (Map.Entry<String, String> header : responseHeaders.entrySet()) {
+        for (Map.Entry<String, List<String>> header : responseHeaders.entrySet()) {
             String name = header.getKey();
-            String value = header.getValue();
 
-            writeHeader(name, value);
+            for (String value : header.getValue()) {
+                writeHeader(name, value);
+            }
         }
 
         if (responseBody && autoChunk) {

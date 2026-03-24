@@ -299,13 +299,11 @@ public class HttpExchangeTest {
     }
 
 
-    /*
     @Test
     void multipleHeadersSameName() throws IOException {
         HttpHandler handler = (request)-> {
-            String accept = request.getHeaderValue("accept");
-            request.respond().writeString("accept=" + accept);
-            return true;
+            String accept = request.getRequestHeaderValue("accept");
+            request.writeString("accept=" + accept);
         };
 
         String result = run(handler,
@@ -316,11 +314,8 @@ public class HttpExchangeTest {
                         "\r\n"
         );
 
-        // claude getting lazy in writing asserts
-        assert result.contains("accept=");
+        assertEquals("HTTP/1.1 200 \r\ncontent-length: 34\r\n\r\naccept=text/html, application/json", result);
     }
-
-     */
 
     @Test
     void connectionCloseHeader() throws IOException {

@@ -21,27 +21,35 @@
         ;; HttpRequest.headers already stores name lowercased -> value
         headers (.getRequestHeaders request)
 
+        scheme
+        (if (.isSecure request) :https :http)
+
+        default-port
+        (if (.isSecure request) 443 80)
+
         ;; extract host header for server-name/server-port
         host (.get headers "host")
         [server-name server-port]
         (when host
           (let [ci (.lastIndexOf ^String host (int \:))]
             (if (neg? ci)
-              [host 80]
+              [host default-port]
               [(subs host 0 ci)
                (try (Integer/parseInt (subs host (inc ci)))
-                    (catch Exception _ 80))])))
+                    (catch Exception _ default-port))])))
 
         method (keyword (.toLowerCase (.getRequestMethod request)))]
 
-    (cond-> {:request-method method
-             :uri uri
-             :headers (into {} headers)
-             :protocol (.getRequestVersion request)
-             :scheme :http
-             :server-name (or server-name "localhost")
-             :server-port (or server-port 80)
-             :remote-addr ""}
+    (cond-> ^{::request request}
+      {:request-method method
+       :uri uri
+       :headers (into {} headers)
+       :protocol (.getRequestVersion request)
+       :scheme scheme
+       :server-name (or server-name "localhost")
+       :server-port (or server-port default-port)
+       :remote-addr (str (.getRemoteAddress request))}
+
       query-string
       (assoc :query-string query-string)
 

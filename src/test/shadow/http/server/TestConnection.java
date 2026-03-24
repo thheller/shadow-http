@@ -1,6 +1,7 @@
 package shadow.http.server;
 
 import java.io.*;
+import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 
 public class TestConnection implements Connection {
@@ -44,6 +45,16 @@ public class TestConnection implements Connection {
     @Override
     public Server getServer() {
         return server;
+    }
+
+    @Override
+    public boolean isSecure() {
+        return false;
+    }
+
+    @Override
+    public SocketAddress getRemoteAddress() {
+        return null;
     }
 
     @Override

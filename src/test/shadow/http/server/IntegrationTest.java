@@ -710,7 +710,7 @@ public class IntegrationTest {
         var received = new CopyOnWriteArrayList<String>();
         var latch = new CountDownLatch(1);
 
-        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+        WebSocket ws = wsBuilder("/ws").subprotocols("large", "small").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
             final StringBuilder sb = new StringBuilder();
 
             @Override

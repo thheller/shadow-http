@@ -3,10 +3,7 @@
     [clojure.core.async :as async]
     [shadow.http.server.ring :as ring])
   (:import
-    [java.io FileInputStream]
-    [java.security KeyStore]
     [java.util List]
-    [javax.net.ssl KeyManagerFactory SSLContext]
     [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketHandler]))
 
 (defmacro vthread [& body]
@@ -14,7 +11,8 @@
      (-> (Thread/ofVirtual)
          (.start (fn* []
                    (try
-                     (do ~@body)
+                     (when-some [body-res# (do ~@body)]
+                       (async/>!! res# body-res#))
                      (finally
                        (async/close! res#))))))
      res#))
@@ -80,8 +78,10 @@
        :server server
        :port (.getLocalPort (.getSocket server))}
       ssl-context
-      (assoc :ssl true))))
+      (assoc :ssl true)
+      host
+      (assoc :host host))))
 
 (defn stop [{:keys [^Server server] :as svc}]
   (.stop server)
-  (dissoc svc ::server))
+  (dissoc svc :server))

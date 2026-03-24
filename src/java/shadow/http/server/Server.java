@@ -21,6 +21,7 @@ public class Server {
     private HttpHandler handler = null;
     private Acceptor acceptor = null;
     private ServerSocket socket = null;
+    private SSLContext sslContext = null;
 
     public Server() {
         this(Config.DEFAULT);
@@ -60,6 +61,7 @@ public class Server {
         if (acceptor != null) {
             throw new IllegalStateException("server already listening. create new server instance if you need multiple endpoints.");
         }
+        this.sslContext = ctx;
         socket = ctx.getServerSocketFactory().createServerSocket();
         socket.setReuseAddress(true);
         socket.bind(new InetSocketAddress(host, port));
@@ -72,6 +74,10 @@ public class Server {
 
     public ServerSocket getSocket() {
         return socket;
+    }
+
+    public SSLContext getSslContext() {
+        return sslContext;
     }
 
     public ExecutorService getExecutor() {
