@@ -11,12 +11,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.concurrent.Flow;
+import java.util.concurrent.*;
 import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -90,6 +91,53 @@ public class IntegrationTest {
                     request.writeString("chunk1", false);
                     request.writeString("chunk2", false);
                     request.writeString("chunk3", true);
+                }
+                case "/ws" -> {
+                    request.upgradeToWebSocket(new WebSocketHandler.Base() {
+                        @Override
+                        public void onText(String payload) throws IOException {
+                            context.sendText("echo: " + payload);
+                        }
+
+                        @Override
+                        public void onClose(int statusCode, String reason) {
+                        }
+                    });
+                }
+                case "/ws-close" -> {
+                    // immediately close after upgrade
+                    request.upgradeToWebSocket(new WebSocketHandler.Base() {
+                        @Override
+                        public WebSocketHandler start(WebSocketConnection ctx) {
+                            super.start(ctx);
+                            try {
+                                ctx.sendText("goodbye");
+                                ctx.sendClose(1000);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                            return this;
+                        }
+                    });
+                }
+                case "/ws-ping" -> {
+                    request.upgradeToWebSocket(new WebSocketHandler.Base() {
+                        @Override
+                        public WebSocketHandler start(WebSocketConnection ctx) {
+                            super.start(ctx);
+                            try {
+                                ctx.sendPing("hello".getBytes(StandardCharsets.UTF_8));
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                            return this;
+                        }
+
+                        @Override
+                        public void onText(String payload) throws IOException {
+                            context.sendText(payload);
+                        }
+                    });
                 }
             }
         };
@@ -497,5 +545,192 @@ public class IntegrationTest {
 
         assertEquals(200, response.statusCode());
         assertEquals("hello world", response.body());
+    }
+
+    // -----------------------------------------------------------------------
+    // WebSocket integration tests
+    // -----------------------------------------------------------------------
+
+    private WebSocket.Builder wsBuilder(String path) {
+        return client.newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(2));
+    }
+
+    private URI wsUri(String path) {
+        return URI.create("ws://localhost:" + port + path);
+    }
+
+    @Test
+    void webSocketEchoText() throws Exception {
+        var received = new CopyOnWriteArrayList<String>();
+        var latch = new CountDownLatch(1);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    received.add(sb.toString());
+                    sb.setLength(0);
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        ws.sendText("hello", true);
+        assertTrue(latch.await(2, TimeUnit.SECONDS), "timed out waiting for echo");
+        assertEquals(1, received.size());
+        assertEquals("echo: hello", received.get(0));
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
+
+    @Test
+    void webSocketMultipleMessages() throws Exception {
+        int messageCount = 5;
+        var received = new CopyOnWriteArrayList<String>();
+        var latch = new CountDownLatch(messageCount);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    received.add(sb.toString());
+                    sb.setLength(0);
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        for (int i = 0; i < messageCount; i++) {
+            ws.sendText("msg" + i, true);
+        }
+
+        assertTrue(latch.await(3, TimeUnit.SECONDS), "timed out waiting for messages");
+        assertEquals(messageCount, received.size());
+        for (int i = 0; i < messageCount; i++) {
+            assertEquals("echo: msg" + i, received.get(i));
+        }
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
+
+    @Test
+    void webSocketServerInitiatedClose() throws Exception {
+        var receivedText = new CopyOnWriteArrayList<String>();
+        var closeLatch = new CountDownLatch(1);
+        var closeCode = new int[]{-1};
+
+        wsBuilder("/ws-close").buildAsync(wsUri("/ws-close"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    receivedText.add(sb.toString());
+                    sb.setLength(0);
+                }
+                webSocket.request(1);
+                return null;
+            }
+
+            @Override
+            public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                closeCode[0] = statusCode;
+                closeLatch.countDown();
+                return null;
+            }
+        }).join();
+
+        assertTrue(closeLatch.await(2, TimeUnit.SECONDS), "timed out waiting for close");
+        assertEquals(1000, closeCode[0]);
+        assertEquals(1, receivedText.size());
+        assertEquals("goodbye", receivedText.get(0));
+    }
+
+    @Test
+    void webSocketPingPong() throws Exception {
+        var pongReceived = new CountDownLatch(1);
+        var textLatch = new CountDownLatch(1);
+
+        WebSocket ws = wsBuilder("/ws-ping").buildAsync(wsUri("/ws-ping"), new WebSocket.Listener() {
+            @Override
+            public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer message) {
+                pongReceived.countDown();
+                webSocket.request(1);
+                return null;
+            }
+
+            @Override
+            public CompletionStage<?> onPing(WebSocket webSocket, ByteBuffer message) {
+                webSocket.request(1);
+                return null;
+            }
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                if (last) {
+                    textLatch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        // server sends a ping on connect; send a ping from client too
+        ws.sendPing(ByteBuffer.wrap("clientping".getBytes(StandardCharsets.UTF_8)));
+        assertTrue(pongReceived.await(2, TimeUnit.SECONDS), "timed out waiting for pong");
+
+        // verify the connection still works after ping/pong
+        ws.sendText("after-ping", true);
+        assertTrue(textLatch.await(2, TimeUnit.SECONDS), "timed out waiting for echo after ping");
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
+
+    @Test
+    void webSocketLargeMessage() throws Exception {
+        // build a message larger than typical buffer sizes
+        StringBuilder large = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            large.append("line ").append(i).append(": padding text for large message test\n");
+        }
+        String largeMsg = large.toString();
+
+        var received = new CopyOnWriteArrayList<String>();
+        var latch = new CountDownLatch(1);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    received.add(sb.toString());
+                    sb.setLength(0);
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        ws.sendText(largeMsg, true);
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "timed out waiting for large echo");
+        assertEquals(1, received.size());
+        assertEquals("echo: " + largeMsg, received.get(0));
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }
 }
