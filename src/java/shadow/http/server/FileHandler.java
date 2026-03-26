@@ -28,15 +28,10 @@ public class FileHandler implements HttpHandler {
         // FIXME: should this all be case insensitive? probably not right?
         // only make sense for case insensitive file systems, otherwise foo.txt and FOO.txt might exist
         // but we could only serve one?
-        String uri = request.requestTarget;
+        String uri = request.getRequestPath();
 
         if (!uri.startsWith("/")) {
             return;
-        }
-
-        int queryIdx = uri.indexOf("?");
-        if (queryIdx != -1) {
-            uri = uri.substring(0, queryIdx);
         }
 
         Path file = root.resolve(uri.substring(1)).normalize();

@@ -60,11 +60,11 @@
 (defn start [{:keys [host port ssl-context] :as config} handler]
   (let [server (Server.)]
     (cond
-      (seq handler)
-      (.setHandler server (HandlerList/create ^List handler))
-
       (instance? HttpHandler handler)
       (.setHandler server handler)
+
+      (seq handler)
+      (.setHandler server (HandlerList/create ^List handler))
 
       :else
       (throw (ex-info "invalid handler" {:handler handler})))

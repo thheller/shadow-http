@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.net.URLDecoder;
 import java.util.*;
 import java.util.zip.GZIPOutputStream;
 
@@ -48,11 +49,15 @@ public class HttpRequest {
 
     public final String requestMethod;
     public final String requestTarget;
+    public final String requestPath;
+    public final String requestQueryString;
     public final String requestVersion;
     public final List<Header> requestHeadersInOrder = new ArrayList<>();
     public final Map<String, String> requestHeaders = new HashMap<>();
 
     BodyMode requestBodyMode = BodyMode.NONE;
+
+    private Map<String, String> queryParams;
 
     InputStream requestBody;
     long requestBodyLength;
@@ -76,6 +81,15 @@ public class HttpRequest {
         this.requestMethod = requestMethod;
         this.requestTarget = requestTarget;
         this.requestVersion = requestVersion;
+
+        int qIdx = requestTarget.indexOf('?');
+        if (qIdx >= 0) {
+            this.requestPath = requestTarget.substring(0, qIdx);
+            this.requestQueryString = requestTarget.substring(qIdx + 1);
+        } else {
+            this.requestPath = requestTarget;
+            this.requestQueryString = null;
+        }
     }
 
     public boolean isSecure() {
@@ -119,8 +133,68 @@ public class HttpRequest {
         return requestTarget;
     }
 
+    public String getRequestPath() {
+        return requestPath;
+    }
+
+    public String getRequestQueryString() {
+        return requestQueryString;
+    }
+
     public String getRequestVersion() {
         return requestVersion;
+    }
+
+    public Map<String, String> getQueryParams() {
+        if (queryParams == null) {
+            queryParams = parseQueryString(requestQueryString);
+        }
+        return queryParams;
+    }
+
+    public String getQueryParam(String name) {
+        return getQueryParams().get(name);
+    }
+
+    public boolean hasQueryParam(String name) {
+        return getQueryParams().containsKey(name);
+    }
+
+    static Map<String, String> parseQueryString(String qs) {
+        if (qs == null || qs.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, String> params = new LinkedHashMap<>();
+        int start = 0;
+        int len = qs.length();
+
+        while (start <= len) {
+            int ampIdx = qs.indexOf('&', start);
+            if (ampIdx < 0) ampIdx = len;
+
+            String pair = qs.substring(start, ampIdx);
+            start = ampIdx + 1;
+
+            if (pair.isEmpty()) continue;
+
+            int eqIdx = pair.indexOf('=');
+            if (eqIdx >= 0) {
+                params.put(decodeComponent(pair.substring(0, eqIdx)), decodeComponent(pair.substring(eqIdx + 1)));
+            } else {
+                params.put(decodeComponent(pair), null);
+            }
+        }
+
+        return params;
+    }
+
+    private static String decodeComponent(String s) {
+        // fast path: no percent-encoding or plus signs
+        if (s.indexOf('%') < 0 && s.indexOf('+') < 0) {
+            return s;
+        }
+        return URLDecoder.decode(s, StandardCharsets.UTF_8);
     }
 
     public List<Header> getRequestHeadersInOrder() {

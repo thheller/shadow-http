@@ -48,16 +48,10 @@ public class ClasspathHandler implements HttpHandler {
             return;
         }
 
-        String uri = request.requestTarget;
+        String uri = request.getRequestPath();
 
         if (!uri.startsWith("/")) {
             return;
-        }
-
-        // Strip query string
-        int queryIdx = uri.indexOf("?");
-        if (queryIdx != -1) {
-            uri = uri.substring(0, queryIdx);
         }
 
         // Map URI → classpath resource path
