@@ -1,9 +1,6 @@
 package shadow.http.server;
 
-import java.io.BufferedInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -67,14 +64,12 @@ public class HttpRequest {
     int responseStatus = 200;
     String responseStatusText = null;
     public final Map<String, List<String>> responseHeaders = new HashMap<>();
-    OutputStream responseOut;
+    private OutputStream responseOut;
     boolean responseBody = true;
     public long responseBytesWritten = 0;
 
     public boolean closeAfter = false;
     public boolean autoCompress = true;
-    public boolean autoChunk = true;
-    public long responseLength = -1;
 
     public HttpRequest(HttpExchange exchange, String requestMethod, String requestTarget, String requestVersion) {
         this.exchange = exchange;
@@ -336,7 +331,6 @@ public class HttpRequest {
         if (state == State.PENDING) {
             responseBody = false;
             beginResponse();
-            state = HttpRequest.State.COMPLETE;
         } else {
             throw new IllegalStateException("can only skip body in pending state");
         }
@@ -352,27 +346,15 @@ public class HttpRequest {
     }
 
     public void writeString(String s, boolean isFinal) throws IOException {
-        checkComplete();
+        OutputStream out = responseBody();
 
-        if (state == State.PENDING) {
-            if (isFinal) {
-                // don't compress small responses
-                int length = s.length();
-                if (length < 850 || !autoCompress) {
-                    responseLength = length;
-                    autoCompress = false;
-                    autoChunk = false;
-                }
-            }
-            beginResponse();
-        }
-
-        // FIXME: actually respect contentChartset
-        responseOut.write(s.getBytes(StandardCharsets.UTF_8));
-        responseOut.flush();
+        // FIXME: should respect user provided encoding
+        out.write(s.getBytes(StandardCharsets.UTF_8));
 
         if (isFinal) {
-            responseOut.close();
+            out.close();
+        } else {
+            out.flush();
         }
     }
 
@@ -381,17 +363,14 @@ public class HttpRequest {
     }
 
     public void writeStream(InputStream in, boolean isFinal) throws IOException {
-        checkComplete();
+        OutputStream out = responseBody();
 
-        if (state == State.PENDING) {
-            beginResponse();
-        }
-
-        in.transferTo(responseOut);
-        responseOut.flush();
+        in.transferTo(out);
 
         if (isFinal) {
-            responseOut.close();
+            out.close();
+        } else {
+            out.flush();
         }
     }
 
@@ -434,13 +413,7 @@ public class HttpRequest {
             setResponseStatus(200);
             setResponseHeader("content-type", mimeType);
 
-            if (compress) {
-                autoCompress = true;
-                autoChunk = true;
-            } else {
-                autoCompress = false;
-                responseLength = size;
-            }
+            autoCompress = compress;
 
             // FIXME: configurable caching options
             // this is soft-cache, allows using cache but forces client to check
@@ -467,50 +440,14 @@ public class HttpRequest {
             throw new IllegalStateException("response already committed");
         }
 
-        responseOut = exchange.out;
-
-        writeStatusLine(responseStatus, responseStatusText);
-
-        if (responseBody && autoCompress) {
-            String acceptEncoding = getRequestHeaderValue("accept-encoding");
-
-            // FIXME: not sure if worth adding dependencies to get zstd or brotli
-            // only gzip is fine for now
-            if (acceptEncoding == null || !acceptEncoding.contains("gzip")) {
-                autoCompress = false;
-            } else {
-                setResponseHeader("content-encoding", "gzip");
-            }
-        }
-
-        for (Map.Entry<String, List<String>> header : responseHeaders.entrySet()) {
-            String name = header.getKey();
-
-            for (String value : header.getValue()) {
-                writeHeader(name, value);
-            }
-        }
-
-        if (responseBody && autoChunk) {
-            writeHeader("transfer-encoding", "chunked");
-        } else if (responseLength >= 0) {
-            writeHeader("content-length", Long.toString(responseLength));
-        }
-
-        if (!closeAfter && "close".equals(getRequestHeaderValue("connection"))) {
-            closeAfter = true;
-        }
-
-        if (closeAfter) {
-            writeHeader("connection", "close");
-        } else if ("HTTP/1.0".equals(requestVersion)) {
-            writeHeader("connection", "keep-alive");
-        }
-
-        writeHeaderEnd();
-
         if (!responseBody) {
-            responseOut.flush();
+            // No body (HEAD, skipBody, etc.) — write headers immediately and complete
+            OutputStream raw = exchange.out;
+            writeStatusLine(raw, responseStatus, responseStatusText);
+            writeResponseHeaders(raw);
+            writeConnectionHeaders(raw);
+            writeHeaderEnd(raw);
+            raw.flush();
             responseOut = null;
             responseBytesWritten = 0;
             state = State.COMPLETE;
@@ -519,18 +456,91 @@ public class HttpRequest {
 
         state = State.BODY;
 
-        // handler code should not be in control of closing underlying out stream since we manage keep-alive handling
-        // but closing is still useful to know if the response was actually properly finished
-        responseOut = new InterceptedCloseOutputStream(this, responseOut);
+        responseOut = new HttpOutput(this, 8192);
+    }
 
-        if (autoChunk) {
-            responseOut = new ChunkedOutputStream(responseOut);
+    /**
+     * Called by BufferedResponseOutputStream when the response fits in the buffer.
+     * Writes headers with Content-Length and sends the body directly.
+     */
+    void commitFixedLength(byte[] data, int length) throws IOException {
+        OutputStream raw = exchange.out;
+        writeStatusLine(raw, responseStatus, responseStatusText);
+
+        // Compress if enabled, data is large enough, and client accepts gzip.
+        // Since we have all the data, we can compress into a buffer and still use Content-Length.
+        if (autoCompress && length >= 850) {
+            String acceptEncoding = getRequestHeaderValue("accept-encoding");
+            if (acceptEncoding != null && acceptEncoding.contains("gzip")) {
+                ByteArrayOutputStream compressed = new ByteArrayOutputStream(length);
+                try (GZIPOutputStream gz = new GZIPOutputStream(compressed)) {
+                    gz.write(data, 0, length);
+                }
+                setResponseHeader("content-encoding", "gzip");
+                data = compressed.toByteArray();
+                length = data.length;
+            }
         }
 
-        // FIXME: if fixed contentLength known could wrap stream to ensure user sends correct amount
+        writeResponseHeaders(raw);
+        writeHeader(raw, "content-length", Integer.toString(length));
+        writeConnectionHeaders(raw);
+        writeHeaderEnd(raw);
+        raw.write(data, 0, length);
+        raw.flush();
+        responseBytesWritten = length;
+        state = State.COMPLETE;
+    }
+
+    /**
+     * Called by BufferedResponseOutputStream when the buffer fills or is flushed.
+     * Writes headers with Transfer-Encoding: chunked and returns the output stream chain.
+     */
+    OutputStream commitChunked() throws IOException {
+        OutputStream raw = exchange.out;
+        writeStatusLine(raw, responseStatus, responseStatusText);
 
         if (autoCompress) {
-            responseOut = new GZIPOutputStream(responseOut, 8192, true);
+            String acceptEncoding = getRequestHeaderValue("accept-encoding");
+            if (acceptEncoding == null || !acceptEncoding.contains("gzip")) {
+                autoCompress = false;
+            } else {
+                setResponseHeader("content-encoding", "gzip");
+            }
+        }
+
+        writeResponseHeaders(raw);
+        writeHeader(raw, "transfer-encoding", "chunked");
+        writeConnectionHeaders(raw);
+        writeHeaderEnd(raw);
+
+        OutputStream out = new InterceptedCloseOutputStream(this, raw);
+        out = new ChunkedOutputStream(out);
+
+        if (autoCompress) {
+            out = new GZIPOutputStream(out, 8192, true);
+        }
+
+        return out;
+    }
+
+    private void writeResponseHeaders(OutputStream out) throws IOException {
+        for (Map.Entry<String, List<String>> header : responseHeaders.entrySet()) {
+            String name = header.getKey();
+            for (String value : header.getValue()) {
+                writeHeader(out, name, value);
+            }
+        }
+    }
+
+    private void writeConnectionHeaders(OutputStream out) throws IOException {
+        if (!closeAfter && "close".equals(getRequestHeaderValue("connection"))) {
+            closeAfter = true;
+        }
+        if (closeAfter) {
+            writeHeader(out, "connection", "close");
+        } else if ("HTTP/1.0".equals(requestVersion)) {
+            writeHeader(out, "connection", "keep-alive");
         }
     }
 
@@ -601,31 +611,31 @@ public class HttpRequest {
         }
     }
 
-    void writeStatusLine(int statusCode, String reasonPhrase) throws IOException {
+    void writeStatusLine(OutputStream out, int statusCode, String reasonPhrase) throws IOException {
         // FIXME: what about http/1.0? what happens if we answer 1.1 to a 1.0 request? does anything actually use 1.0?
-        responseOut.write(HTTP11_START);
+        out.write(HTTP11_START);
 
         // status-code = 3DIGIT
-        responseOut.write('0' + (statusCode / 100));
-        responseOut.write('0' + (statusCode / 10) % 10);
-        responseOut.write('0' + statusCode % 10);
-        responseOut.write(' ');
+        out.write('0' + (statusCode / 100));
+        out.write('0' + (statusCode / 10) % 10);
+        out.write('0' + statusCode % 10);
+        out.write(' ');
 
         if (reasonPhrase != null && !reasonPhrase.isEmpty()) {
-            responseOut.write(reasonPhrase.getBytes(StandardCharsets.US_ASCII));
+            out.write(reasonPhrase.getBytes(StandardCharsets.US_ASCII));
         }
 
-        responseOut.write(CRLF);
+        out.write(CRLF);
     }
 
-    void writeHeader(String name, String value) throws IOException {
-        responseOut.write(name.getBytes(StandardCharsets.US_ASCII));
-        responseOut.write(COLON_SP);
-        responseOut.write(value.getBytes(StandardCharsets.US_ASCII));
-        responseOut.write(CRLF);
+    void writeHeader(OutputStream out, String name, String value) throws IOException {
+        out.write(name.getBytes(StandardCharsets.US_ASCII));
+        out.write(COLON_SP);
+        out.write(value.getBytes(StandardCharsets.US_ASCII));
+        out.write(CRLF);
     }
 
-    void writeHeaderEnd() throws IOException {
-        responseOut.write(CRLF);
+    void writeHeaderEnd(OutputStream out) throws IOException {
+        out.write(CRLF);
     }
 }
