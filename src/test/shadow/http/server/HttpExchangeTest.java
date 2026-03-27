@@ -54,6 +54,74 @@ public class HttpExchangeTest {
     }
 
     @Test
+    void outputIsntChunked() throws IOException {
+        HttpHandler helloWorld = (request) -> {
+            try (var out = new HttpOutput(request, 256)) {
+                out.write("Hello World!");
+            }
+        };
+
+        String result = run(helloWorld,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-length: 12\r\n" +
+                "\r\n" +
+                "Hello World!", result);
+    }
+
+    @Test
+    void outputIsChunkedIfFlushedEarly() throws IOException {
+        HttpHandler helloWorld = (request) -> {
+            try (var out = new HttpOutput(request, 256)) {
+                out.write("chunk1");
+                out.flush();
+                out.write("chunk2");
+            }
+        };
+
+        String result = run(helloWorld,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "transfer-encoding: chunked\r\n" +
+                "\r\n" +
+                "6\r\n" +
+                "chunk1\r\n" +
+                "6\r\n" +
+                "chunk2\r\n" +
+                "0\r\n\r\n", result);
+    }
+
+    @Test
+    void streamDefaultIsChunked() throws IOException {
+        HttpHandler helloWorld = (request) -> {
+            try (var out = request.responseBody()) {
+                out.write("Hello World!".getBytes("utf-8"));
+            }
+        };
+
+        String result = run(helloWorld,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "transfer-encoding: chunked\r\n" +
+                "\r\n" +
+                "c\r\n" +
+                "Hello World!\r\n" +
+                "0\r\n\r\n", result);
+    }
+
+    @Test
     void simpleMultipleRequests() throws IOException {
         HttpHandler helloWorld = (request) -> {
             request.writeString("Hello World!");
