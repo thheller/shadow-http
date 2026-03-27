@@ -109,7 +109,13 @@ public class ClasspathHandler implements HttpHandler {
         request.setResponseStatus(200);
         request.setResponseHeader("content-type", mimeType);
 
-        request.autoCompress = compress;
+        if (compress) {
+            request.autoCompress = true;
+            request.autoChunk = true;
+        } else {
+            request.autoCompress = false;
+            request.responseLength = contentLength;
+        }
 
         request.setResponseHeader("cache-control", "private, no-cache");
         if (lastModified != null) {

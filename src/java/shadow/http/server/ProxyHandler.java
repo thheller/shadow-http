@@ -75,6 +75,7 @@ public class ProxyHandler implements HttpHandler {
 
             // Let the server handle chunking/compression itself
             request.autoCompress = false;
+            request.autoChunk = true;
 
             // Stream the response body
             try (InputStream body = response.body()) {
