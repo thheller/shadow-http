@@ -228,49 +228,32 @@ public class HttpInput extends InputStream {
         // HTTP version is always exactly 8 bytes: HTTP/x.y
         ensureLookahead(8, "HTTP-version does not fit into the input buffer");
 
-        int p = position;
-        int b0 = buffer[p] & 0xFF;
-        int b1 = buffer[p + 1] & 0xFF;
-        int b2 = buffer[p + 2] & 0xFF;
-        int b3 = buffer[p + 3] & 0xFF;
-        int b4 = buffer[p + 4] & 0xFF;
-        int major = buffer[p + 5] & 0xFF;
-        int b6 = buffer[p + 6] & 0xFF;
-        int minor = buffer[p + 7] & 0xFF;
+        int b0 = buffer[position] & 0xFF;
+        int b1 = buffer[position + 1] & 0xFF;
+        int b2 = buffer[position + 2] & 0xFF;
+        int b3 = buffer[position + 3] & 0xFF;
+        int b4 = buffer[position + 4] & 0xFF;
+        int major = buffer[position + 5] & 0xFF;
+        int b6 = buffer[position + 6] & 0xFF;
+        int minor = buffer[position + 7] & 0xFF;
 
-        if (b0 != 'H' || b1 != 'T' || b2 != 'T' || b3 != 'P' || b4 != '/') {
-            // Find the first mismatch for error reporting
-            byte[] expected = {'H', 'T', 'T', 'P', '/'};
-            for (int i = 0; i < 5; i++) {
-                int actual = buffer[p + i] & 0xFF;
-                if (actual != expected[i]) {
-                    throw new BadRequestException("Invalid HTTP-version: expected '" + (char) expected[i] + "' but got 0x" + Integer.toHexString(actual));
-                }
-            }
+        if (b0 != 'H' || b1 != 'T' || b2 != 'T' || b3 != 'P' || b4 != '/' || b6 != '.' || major != '1') {
+            throw new BadRequestException("Invalid HTTP-version");
         }
 
-        if (!isDigit(major)) {
-            throw new BadRequestException("Invalid HTTP-version major digit: 0x" + Integer.toHexString(major));
-        }
-        if (b6 != '.') {
-            throw new BadRequestException("Invalid HTTP-version: expected '.' but got 0x" + Integer.toHexString(b6));
-        }
-        if (!isDigit(minor)) {
-            throw new BadRequestException("Invalid HTTP-version minor digit: 0x" + Integer.toHexString(minor));
-        }
+        position += 8;
 
-        position = p + 8;
+        if (minor == '1')
+            return HTTP_1_1;
+        else if (minor == '0')
+            return HTTP_1_0;
 
-        if (major == '1') {
-            if (minor == '1') return HTTP_1_1;
-            if (minor == '0') return HTTP_1_0;
-        }
-
-        throw new BadRequestException("Unsupported HTTP version: " + asciiString(p, 8));
+        throw new BadRequestException("Invalid HTTP version");
     }
 
     /**
      * reads the next http header from the stream
+     *
      * @return the read header or null to indicate headers are done
      * @throws IOException
      */
@@ -369,7 +352,7 @@ public class HttpInput extends InputStream {
         }
     }
 
-      /**
+    /**
      * Reads the next chunk from a chunked Transfer-Encoding message body.
      * Per RFC 9112 Section 7.1:
      * <p>

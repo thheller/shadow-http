@@ -145,7 +145,7 @@ public class HttpInputTest {
         input.readTarget();
 
         BadRequestException error = assertThrows(BadRequestException.class, input::readVersion);
-        assertEquals("Invalid HTTP-version: expected 'P' but got 0x58", error.getMessage());
+        assertEquals("Invalid HTTP-version", error.getMessage());
     }
 
     @Test
@@ -419,7 +419,7 @@ public class HttpInputTest {
         HttpInput input = httpInput(32, "HTTZ/1.1 200 OK\r\n\r\n");
 
         BadRequestException error = assertThrows(BadRequestException.class, input::readResponseVersion);
-        assertEquals("Invalid HTTP-version: expected 'P' but got 0x5a", error.getMessage());
+        assertEquals("Invalid HTTP-version", error.getMessage());
     }
 
     @Test
