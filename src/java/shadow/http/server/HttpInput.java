@@ -77,7 +77,7 @@ public class HttpInput extends InputStream {
                         throw new BadRequestException("Empty method token");
                     }
 
-                    String method = asciiString(tokenStart, position - tokenStart);
+                    String method = stringFromBuffer(tokenStart, position - tokenStart);
                     position++;
                     return method;
                 }
@@ -103,7 +103,7 @@ public class HttpInput extends InputStream {
                         throw new BadRequestException("Empty request-target");
                     }
 
-                    String target = latin1String(tokenStart, position - tokenStart);
+                    String target = stringFromBuffer(tokenStart, position - tokenStart);
                     position++;
                     return target;
                 }
@@ -202,7 +202,7 @@ public class HttpInput extends InputStream {
 
                 if (b == CR || b == LF) {
                     int valueEnd = position - trailingWhitespace;
-                    String reason = latin1String(tokenStart, valueEnd - tokenStart);
+                    String reason = stringFromBuffer(tokenStart, valueEnd - tokenStart);
                     consumeLineEnding("HTTP status-line must end with CRLF");
                     return reason;
                 }
@@ -299,7 +299,7 @@ public class HttpInput extends InputStream {
         }
 
         int nameLen = position - nameStart;
-        String nameIn = asciiString(nameStart, nameLen);
+        String nameIn = stringFromBuffer(nameStart, nameLen);
         String nameLower = nameIn.toLowerCase(Locale.US);
 
         position++; // skip colon
@@ -330,7 +330,7 @@ public class HttpInput extends InputStream {
 
                 if (b == CR || b == LF) {
                     int valueEnd = position - trailingWhitespace;
-                    String value = latin1String(valueStart, valueEnd - valueStart);
+                    String value = stringFromBuffer(valueStart, valueEnd - valueStart);
                     consumeLineEnding("HTTP header line must end with CRLF");
                     return new Header(nameIn, nameLower, value);
                 }
@@ -755,7 +755,7 @@ public class HttpInput extends InputStream {
             if (position == nameStart) {
                 throw new BadRequestException("Empty chunk extension name");
             }
-            String name = asciiString(nameStart, position - nameStart);
+            String name = stringFromBuffer(nameStart, position - nameStart);
 
             skipOWS();
 
@@ -785,7 +785,7 @@ public class HttpInput extends InputStream {
                     if (position == valueStart) {
                         throw new BadRequestException("Invalid chunk extension value");
                     }
-                    value = asciiString(valueStart, position - valueStart);
+                    value = stringFromBuffer(valueStart, position - valueStart);
                 }
             }
 
@@ -852,16 +852,10 @@ public class HttpInput extends InputStream {
         }
     }
 
-    private String asciiString(int start, int length) {
-        return new String(buffer, start, length, StandardCharsets.US_ASCII);
-    }
-
-    private String latin1String(int start, int length) {
+    private String stringFromBuffer(int start, int length) {
+        // always using ISO_8859_1 since it is a superset of US_ASCII and has a fast path in String impl
+        // don't need to worry about unicode things in headers since spec is max ISO_8859_1
         return new String(buffer, start, length, StandardCharsets.ISO_8859_1);
-    }
-
-    public static boolean isTchar(int b) {
-        return b >= 0 && b < 256 && TCHAR[b];
     }
 
     private static int hexDigitValue(int b) {
