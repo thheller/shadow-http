@@ -93,10 +93,119 @@ public class HttpInput extends InputStream {
     }
 
     /**
-     * @return the string indicating the used http version (most likely "HTTP/1.1")
+     * Reads the HTTP-version at the end of a request-line, consuming the trailing CRLF.
+     *
+     * @return the HTTP version string (e.g., "HTTP/1.1")
      * @throws IOException
      */
     public String readVersion() throws IOException {
+        String version = parseVersionToken();
+        consumeLineEnding("HTTP-version must be followed by CRLF");
+        return version;
+    }
+
+    /**
+     * Reads the HTTP-version at the start of a response status-line, consuming the trailing SP.
+     *
+     * @return the HTTP version string (e.g., "HTTP/1.1")
+     * @throws IOException
+     */
+    public String readResponseVersion() throws IOException {
+        String version = parseVersionToken();
+
+        ensureLookahead(1, "HTTP status-line does not fit into the input buffer");
+        int b = buffer[position] & 0xFF;
+        if (b != SP) {
+            throw new BadRequestException("HTTP-version in status-line must be followed by SP");
+        }
+        position++;
+
+        return version;
+    }
+
+    /**
+     * Reads the 3-digit status code from a response status-line, consuming the trailing SP.
+     * Per RFC 9112 Section 4: status-code = 3DIGIT
+     *
+     * @return the status code as an integer (100–999)
+     * @throws IOException
+     */
+    public int readStatusCode() throws IOException {
+        int tokenStart = position;
+
+        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
+        int d1 = buffer[position] & 0xFF;
+        if (!isDigit(d1)) {
+            throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d1));
+        }
+        position++;
+
+        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
+        int d2 = buffer[position] & 0xFF;
+        if (!isDigit(d2)) {
+            throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d2));
+        }
+        position++;
+
+        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
+        int d3 = buffer[position] & 0xFF;
+        if (!isDigit(d3)) {
+            throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d3));
+        }
+        position++;
+
+        int statusCode = (d1 - '0') * 100 + (d2 - '0') * 10 + (d3 - '0');
+
+        // RFC 9112: "A server MUST send the space that separates the
+        // status-code from the reason-phrase even when the reason-phrase is absent"
+        ensureLookahead(1, "HTTP status-line does not fit into the input buffer");
+        int b = buffer[position] & 0xFF;
+        if (b != SP) {
+            throw new BadRequestException("Status-code must be followed by SP");
+        }
+        position++;
+
+        return statusCode;
+    }
+
+    /**
+     * Reads the optional reason-phrase from a response status-line, consuming the trailing CRLF.
+     * Per RFC 9112 Section 4: reason-phrase = *( HTAB / SP / VCHAR / obs-text )
+     *
+     * @return the reason phrase (may be empty), with trailing whitespace trimmed
+     * @throws IOException
+     */
+    public String readReasonPhrase() throws IOException {
+        int tokenStart = position;
+        int trailingWhitespace = 0;
+
+        while (true) {
+            tokenStart = ensureTokenByte(tokenStart, "HTTP reason-phrase does not fit into the input buffer");
+            int b = buffer[position] & 0xFF;
+
+            if (b == CR || b == LF) {
+                break;
+            }
+
+            if (!isHeaderValueOctet(b)) {
+                throw new BadRequestException("Invalid octet in reason-phrase: 0x" + Integer.toHexString(b));
+            }
+
+            position++;
+            if (b == SP || b == HTAB) {
+                trailingWhitespace++;
+            } else {
+                trailingWhitespace = 0;
+            }
+        }
+
+        int valueEnd = position - trailingWhitespace;
+        String reason = latin1String(tokenStart, valueEnd - tokenStart);
+        consumeLineEnding("HTTP status-line must end with CRLF");
+        return reason;
+    }
+
+    private String parseVersionToken() throws IOException {
         int tokenStart = position;
 
         tokenStart = expectTokenByte(tokenStart, 'H', "Invalid HTTP-version");
@@ -121,9 +230,7 @@ public class HttpInput extends InputStream {
         }
         position++;
 
-        String version = asciiString(tokenStart, position - tokenStart);
-        consumeLineEnding("HTTP-version must be followed by CRLF");
-        return version;
+        return asciiString(tokenStart, position - tokenStart);
     }
 
     /**

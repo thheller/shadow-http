@@ -308,6 +308,142 @@ public class HttpInputTest {
         assertEquals("Chunk size too large: 10", error.getMessage());
     }
 
+    // --- Response status-line tests ---
+
+    @Test
+    void parsesResponseStatusLineWithReasonPhrase() throws IOException {
+        HttpInput input = httpInput(
+                32,
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/plain\r\n",
+                "\r\nbody"
+        );
+
+        assertEquals("HTTP/1.1", input.readResponseVersion());
+        assertEquals(200, input.readStatusCode());
+        assertEquals("OK", input.readReasonPhrase());
+
+        Header ct = input.readHeader();
+        assertEquals("content-type", ct.name);
+        assertEquals("text/plain", ct.value);
+        assertNull(input.readHeader());
+
+        assertEquals("body", new String(input.readAllBytes(), StandardCharsets.ISO_8859_1));
+    }
+
+    @Test
+    void parsesResponseStatusLineWithEmptyReasonPhrase() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.1 204 \r\n\r\n");
+
+        assertEquals("HTTP/1.1", input.readResponseVersion());
+        assertEquals(204, input.readStatusCode());
+        assertEquals("", input.readReasonPhrase());
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void parsesResponseStatusLineWithMultiWordReasonPhrase() throws IOException {
+        HttpInput input = httpInput(
+                32,
+                "HTTP/1.1 404 Not Found\r\n\r\n"
+        );
+
+        assertEquals("HTTP/1.1", input.readResponseVersion());
+        assertEquals(404, input.readStatusCode());
+        assertEquals("Not Found", input.readReasonPhrase());
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void parsesResponseStatusLineAcrossSmallBuffers() throws IOException {
+        HttpInput input = httpInput(
+                16,
+                "HTTP/1.",
+                "1 200 O",
+                "K\r\nHos",
+                "t: exam",
+                "ple.com",
+                "\r\n\r\n"
+        );
+
+        assertEquals("HTTP/1.1", input.readResponseVersion());
+        assertEquals(200, input.readStatusCode());
+        assertEquals("OK", input.readReasonPhrase());
+
+        Header host = input.readHeader();
+        assertEquals("host", host.name);
+        assertEquals("example.com", host.value);
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void parsesResponseStatusLineWithBareLf() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.1 200 OK\n\n");
+
+        assertEquals("HTTP/1.1", input.readResponseVersion());
+        assertEquals(200, input.readStatusCode());
+        assertEquals("OK", input.readReasonPhrase());
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void parsesResponseWithHttp10Version() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.0 301 Moved Permanently\r\n\r\n");
+
+        assertEquals("HTTP/1.0", input.readResponseVersion());
+        assertEquals(301, input.readStatusCode());
+        assertEquals("Moved Permanently", input.readReasonPhrase());
+        assertNull(input.readHeader());
+    }
+
+    @Test
+    void rejectsInvalidStatusCodeDigit() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.1 2x0 OK\r\n\r\n");
+        input.readResponseVersion();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readStatusCode);
+        assertEquals("Invalid status-code digit: 0x78", error.getMessage());
+    }
+
+    @Test
+    void rejectsStatusCodeWithoutTrailingSpace() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.1 200\r\n\r\n");
+        input.readResponseVersion();
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readStatusCode);
+        assertEquals("Status-code must be followed by SP", error.getMessage());
+    }
+
+    @Test
+    void rejectsInvalidVersionInStatusLine() {
+        HttpInput input = httpInput(32, "HTTZ/1.1 200 OK\r\n\r\n");
+
+        BadRequestException error = assertThrows(BadRequestException.class, input::readResponseVersion);
+        assertEquals("Invalid HTTP-version: expected 'P' but got 0x5a", error.getMessage());
+    }
+
+    @Test
+    void reasonPhraseTrimsTrailingWhitespace() throws IOException {
+        HttpInput input = httpInput(32, "HTTP/1.1 200 OK   \r\n\r\n");
+        input.readResponseVersion();
+        input.readStatusCode();
+
+        assertEquals("OK", input.readReasonPhrase());
+    }
+
+    @Test
+    void reasonPhrasePreservesLatin1Characters() throws IOException {
+        HttpInput input = httpInput(
+                16,
+                "HTTP/1.1 200 caf",
+                "\u00e9\r\n\r\n"
+        );
+        input.readResponseVersion();
+        input.readStatusCode();
+
+        assertEquals("caf\u00e9", input.readReasonPhrase());
+    }
+
     private static byte[] copy(byte[] bytes, int length) {
         byte[] copy = new byte[length];
         System.arraycopy(bytes, 0, copy, 0, length);
