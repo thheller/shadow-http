@@ -98,12 +98,20 @@ public class HttpExchange implements Exchange {
         HttpRequest request = new HttpRequest(this, method, target, version);
 
         int headerCount = 0;
+        String host = null;
 
         while (true) {
             // Check for the empty line that terminates the header section
             Header header = in.readHeader();
             if (header == null) {
                 break;
+            }
+
+            if (header.name.equals("host")) {
+                if (host != null) {
+                    throw new BadRequestException("Multiple Host header fields in HTTP/1.1 request");
+                }
+                host = header.value;
             }
 
             request.requestHeadersInOrder.add(header);
@@ -114,6 +122,11 @@ public class HttpExchange implements Exchange {
                 throw new BadRequestException(String.format("Client sent more than %d headers", MAX_HEADERS));
             }
         }
+
+        if ("HTTP/1.1".equals(version) && host == null) {
+            throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
+        }
+
         return request;
     }
 }

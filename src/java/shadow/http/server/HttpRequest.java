@@ -538,35 +538,6 @@ public class HttpRequest {
      * validates and extracts some data from request headers after parsing is finished
      */
     void prepare() throws BadRequestException {
-        /*
-          Section 3.2: A client MUST send a Host header field in all HTTP/1.1
-          request messages. A server MUST respond with 400 if missing or duplicated.
-         */
-        if ("HTTP/1.1".equals(requestVersion)) {
-            int hostCount = 0;
-
-            if (hasRepeatedRequestHeaders()) {
-                for (Header h : requestHeadersInOrder) {
-                    if (h.name.equals("host")) {
-                        hostCount++;
-                    }
-                }
-                if (hostCount == 0) {
-                    throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
-                }
-                if (hostCount > 1) {
-                    throw new BadRequestException("Multiple Host header fields in HTTP/1.1 request");
-                }
-            } else if (!hasRequestHeader("host")) {
-                throw new BadRequestException("Missing required Host header field in HTTP/1.1 request");
-            }
-        } else if ("HTTP/1.0".equals(requestVersion)) {
-            closeAfter = !getRequestHeaderValue("connection").equalsIgnoreCase("keep-alive");
-        } else {
-            throw new BadRequestException("Unsupported HTTP Version: " + requestVersion);
-        }
-
-
         String transferEncoding = getRequestHeaderValue("transfer-encoding");
         if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
             requestBodyMode = BodyMode.CHUNKED;
