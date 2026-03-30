@@ -33,5 +33,7 @@
 
     :dependencies
     [[org.junit.jupiter/junit-jupiter-api "5.9.2"]
-     [org.junit.jupiter/junit-jupiter-engine "5.9.2"]]
+     [org.junit.jupiter/junit-jupiter-engine "5.9.2"]
+     [org.openjdk.jmh/jmh-core "1.37"]
+     [org.openjdk.jmh/jmh-generator-annprocess "1.37"]]
     }})

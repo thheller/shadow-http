@@ -3,7 +3,8 @@
   "src/main"
   "src/java"
   "src/test"
-  "target/classes"]
+  "target/classes"
+  "target/test-classes"]
 
  :deps
  {}
@@ -14,6 +15,8 @@
    {thheller/shadow-cljs {:mvn/version "3.3.6"}
     org.junit.jupiter/junit-jupiter-api {:mvn/version "5.9.2"}
     org.junit.jupiter/junit-jupiter-engine {:mvn/version "5.9.2"}
+    org.openjdk.jmh/jmh-core {:mvn/version "1.37"}
+    org.openjdk.jmh/jmh-generator-annprocess {:mvn/version "1.37"}
     criterium/criterium {:mvn/version "0.4.6"}
     com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}
     }

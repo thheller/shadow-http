@@ -15,6 +15,10 @@ public class HttpInput extends InputStream {
     private static final int COLON = ':';
 
     private static final boolean[] TCHAR = new boolean[256];
+    private static final boolean[] HEADER_VALUE_OCTET = new boolean[256];
+
+    // target-byte: anything > 0x20 and != 0x7F
+    private static final boolean[] TARGET_BYTE = new boolean[256];
 
     static {
         for (char c = 'A'; c <= 'Z'; c++) TCHAR[c] = true;
@@ -23,7 +27,21 @@ public class HttpInput extends InputStream {
         for (char c : new char[]{'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'}) {
             TCHAR[c] = true;
         }
+
+        // SP, HTAB, VCHAR (0x21-0x7E), obs-text (0x80-0xFF)
+        HEADER_VALUE_OCTET[SP] = true;
+        HEADER_VALUE_OCTET[HTAB] = true;
+        for (int i = 0x21; i <= 0x7E; i++) HEADER_VALUE_OCTET[i] = true;
+        for (int i = 0x80; i <= 0xFF; i++) HEADER_VALUE_OCTET[i] = true;
+
+        for (int i = 0x21; i <= 0xFF; i++) {
+            if (i != 0x7F) TARGET_BYTE[i] = true;
+        }
     }
+
+    // Pre-interned version strings to avoid allocation on every request
+    private static final String HTTP_1_1 = "HTTP/1.1";
+    private static final String HTTP_1_0 = "HTTP/1.0";
 
     private final InputStream in;
     private final byte[] buffer;
@@ -45,25 +63,30 @@ public class HttpInput extends InputStream {
         int tokenStart = position;
 
         while (true) {
-            tokenStart = ensureTokenByte(tokenStart, "HTTP method does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
+            // Fast path: scan buffered bytes directly
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
 
-            if (isTchar(b)) {
-                position++;
-                continue;
-            }
-
-            if (b == SP) {
-                if (position == tokenStart) {
-                    throw new BadRequestException("Empty method token");
+                if (TCHAR[b]) {
+                    position++;
+                    continue;
                 }
 
-                String method = asciiString(tokenStart, position - tokenStart);
-                position++;
-                return method;
+                if (b == SP) {
+                    if (position == tokenStart) {
+                        throw new BadRequestException("Empty method token");
+                    }
+
+                    String method = asciiString(tokenStart, position - tokenStart);
+                    position++;
+                    return method;
+                }
+
+                throw new BadRequestException("Invalid octet in method token: 0x" + Integer.toHexString(b));
             }
 
-            throw new BadRequestException("Invalid octet in method token: 0x" + Integer.toHexString(b));
+            // Slow path: need more data
+            tokenStart = ensureTokenByte(tokenStart, "HTTP method does not fit into the input buffer");
         }
     }
 
@@ -71,24 +94,29 @@ public class HttpInput extends InputStream {
         int tokenStart = position;
 
         while (true) {
-            tokenStart = ensureTokenByte(tokenStart, "HTTP request-target does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
+            // Fast path: scan buffered bytes directly
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
 
-            if (b == SP) {
-                if (position == tokenStart) {
-                    throw new BadRequestException("Empty request-target");
+                if (b == SP) {
+                    if (position == tokenStart) {
+                        throw new BadRequestException("Empty request-target");
+                    }
+
+                    String target = latin1String(tokenStart, position - tokenStart);
+                    position++;
+                    return target;
                 }
 
-                String target = latin1String(tokenStart, position - tokenStart);
+                if (!TARGET_BYTE[b]) {
+                    throw new BadRequestException("Invalid octet in request-target: 0x" + Integer.toHexString(b));
+                }
+
                 position++;
-                return target;
             }
 
-            if (b <= 0x20 || b == 0x7F) {
-                throw new BadRequestException("Invalid octet in request-target: 0x" + Integer.toHexString(b));
-            }
-
-            position++;
+            // Slow path: need more data
+            tokenStart = ensureTokenByte(tokenStart, "HTTP request-target does not fit into the input buffer");
         }
     }
 
@@ -131,41 +159,29 @@ public class HttpInput extends InputStream {
      * @throws IOException
      */
     public int readStatusCode() throws IOException {
-        int tokenStart = position;
+        // Need 3 digits + SP = 4 bytes
+        ensureLookahead(4, "HTTP status-code does not fit into the input buffer");
 
-        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
         int d1 = buffer[position] & 0xFF;
+        int d2 = buffer[position + 1] & 0xFF;
+        int d3 = buffer[position + 2] & 0xFF;
+        int sp = buffer[position + 3] & 0xFF;
+
         if (!isDigit(d1)) {
             throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d1));
         }
-        position++;
-
-        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
-        int d2 = buffer[position] & 0xFF;
         if (!isDigit(d2)) {
             throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d2));
         }
-        position++;
-
-        tokenStart = ensureTokenByte(tokenStart, "HTTP status-code does not fit into the input buffer");
-        int d3 = buffer[position] & 0xFF;
         if (!isDigit(d3)) {
             throw new BadRequestException("Invalid status-code digit: 0x" + Integer.toHexString(d3));
         }
-        position++;
-
-        int statusCode = (d1 - '0') * 100 + (d2 - '0') * 10 + (d3 - '0');
-
-        // RFC 9112: "A server MUST send the space that separates the
-        // status-code from the reason-phrase even when the reason-phrase is absent"
-        ensureLookahead(1, "HTTP status-line does not fit into the input buffer");
-        int b = buffer[position] & 0xFF;
-        if (b != SP) {
+        if (sp != SP) {
             throw new BadRequestException("Status-code must be followed by SP");
         }
-        position++;
 
-        return statusCode;
+        position += 4;
+        return (d1 - '0') * 100 + (d2 - '0') * 10 + (d3 - '0');
     }
 
     /**
@@ -180,57 +196,77 @@ public class HttpInput extends InputStream {
         int trailingWhitespace = 0;
 
         while (true) {
+            // Fast path: scan buffered bytes directly
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
+
+                if (b == CR || b == LF) {
+                    int valueEnd = position - trailingWhitespace;
+                    String reason = latin1String(tokenStart, valueEnd - tokenStart);
+                    consumeLineEnding("HTTP status-line must end with CRLF");
+                    return reason;
+                }
+
+                if (!HEADER_VALUE_OCTET[b]) {
+                    throw new BadRequestException("Invalid octet in reason-phrase: 0x" + Integer.toHexString(b));
+                }
+
+                position++;
+                if (b == SP || b == HTAB) {
+                    trailingWhitespace++;
+                } else {
+                    trailingWhitespace = 0;
+                }
+            }
+
+            // Slow path: need more data
             tokenStart = ensureTokenByte(tokenStart, "HTTP reason-phrase does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
-
-            if (b == CR || b == LF) {
-                break;
-            }
-
-            if (!isHeaderValueOctet(b)) {
-                throw new BadRequestException("Invalid octet in reason-phrase: 0x" + Integer.toHexString(b));
-            }
-
-            position++;
-            if (b == SP || b == HTAB) {
-                trailingWhitespace++;
-            } else {
-                trailingWhitespace = 0;
-            }
         }
-
-        int valueEnd = position - trailingWhitespace;
-        String reason = latin1String(tokenStart, valueEnd - tokenStart);
-        consumeLineEnding("HTTP status-line must end with CRLF");
-        return reason;
     }
 
     private String parseVersionToken() throws IOException {
-        int tokenStart = position;
+        // HTTP version is always exactly 8 bytes: HTTP/x.y
+        ensureLookahead(8, "HTTP-version does not fit into the input buffer");
 
-        tokenStart = expectTokenByte(tokenStart, 'H', "Invalid HTTP-version");
-        tokenStart = expectTokenByte(tokenStart, 'T', "Invalid HTTP-version");
-        tokenStart = expectTokenByte(tokenStart, 'T', "Invalid HTTP-version");
-        tokenStart = expectTokenByte(tokenStart, 'P', "Invalid HTTP-version");
-        tokenStart = expectTokenByte(tokenStart, '/', "Invalid HTTP-version");
+        int p = position;
+        int b0 = buffer[p] & 0xFF;
+        int b1 = buffer[p + 1] & 0xFF;
+        int b2 = buffer[p + 2] & 0xFF;
+        int b3 = buffer[p + 3] & 0xFF;
+        int b4 = buffer[p + 4] & 0xFF;
+        int major = buffer[p + 5] & 0xFF;
+        int b6 = buffer[p + 6] & 0xFF;
+        int minor = buffer[p + 7] & 0xFF;
 
-        tokenStart = ensureTokenByte(tokenStart, "HTTP-version does not fit into the input buffer");
-        int major = buffer[position] & 0xFF;
+        if (b0 != 'H' || b1 != 'T' || b2 != 'T' || b3 != 'P' || b4 != '/') {
+            // Find the first mismatch for error reporting
+            byte[] expected = {'H', 'T', 'T', 'P', '/'};
+            for (int i = 0; i < 5; i++) {
+                int actual = buffer[p + i] & 0xFF;
+                if (actual != expected[i]) {
+                    throw new BadRequestException("Invalid HTTP-version: expected '" + (char) expected[i] + "' but got 0x" + Integer.toHexString(actual));
+                }
+            }
+        }
+
         if (!isDigit(major)) {
             throw new BadRequestException("Invalid HTTP-version major digit: 0x" + Integer.toHexString(major));
         }
-        position++;
-
-        tokenStart = expectTokenByte(tokenStart, '.', "Invalid HTTP-version");
-
-        tokenStart = ensureTokenByte(tokenStart, "HTTP-version does not fit into the input buffer");
-        int minor = buffer[position] & 0xFF;
+        if (b6 != '.') {
+            throw new BadRequestException("Invalid HTTP-version: expected '.' but got 0x" + Integer.toHexString(b6));
+        }
         if (!isDigit(minor)) {
             throw new BadRequestException("Invalid HTTP-version minor digit: 0x" + Integer.toHexString(minor));
         }
-        position++;
 
-        return asciiString(tokenStart, position - tokenStart);
+        position = p + 8;
+
+        if (major == '1') {
+            if (minor == '1') return HTTP_1_1;
+            if (minor == '0') return HTTP_1_0;
+        }
+
+        throw new BadRequestException("Unsupported HTTP version: " + asciiString(p, 8));
     }
 
     /**
@@ -245,70 +281,92 @@ public class HttpInput extends InputStream {
 
         int nameStart = position;
 
+        // Parse header field name
         while (true) {
-            nameStart = ensureTokenByte(nameStart, "HTTP header line does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
+            // Fast path: scan buffered bytes directly
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
 
-            if (isTchar(b)) {
-                position++;
-                continue;
+                if (TCHAR[b]) {
+                    position++;
+                    continue;
+                }
+
+                if (b == COLON) {
+                    if (position == nameStart) {
+                        throw new BadRequestException("Empty header field name");
+                    }
+                    break;
+                }
+
+                if (b == SP || b == HTAB) {
+                    throw new BadRequestException("Whitespace between header field name and colon is not allowed");
+                }
+
+                throw new BadRequestException("Invalid octet in header field name: 0x" + Integer.toHexString(b));
             }
 
-            if (b == COLON) {
-                if (position == nameStart) {
-                    throw new BadRequestException("Empty header field name");
-                }
+            if (position < limit) {
+                // broke out because we found COLON
                 break;
             }
 
-            if (b == SP || b == HTAB) {
-                throw new BadRequestException("Whitespace between header field name and colon is not allowed");
-            }
-
-            throw new BadRequestException("Invalid octet in header field name: 0x" + Integer.toHexString(b));
+            // Slow path: need more data
+            nameStart = ensureTokenByte(nameStart, "HTTP header line does not fit into the input buffer");
         }
 
-        String nameIn = asciiString(nameStart, position - nameStart);
-        position++;
+        int nameLen = position - nameStart;
+        String nameIn = asciiString(nameStart, nameLen);
+        String nameLower = nameIn.toLowerCase(Locale.US);
 
+        position++; // skip colon
+
+        // Skip OWS after colon - fast path
         while (true) {
-            ensureLookahead(1, "HTTP header line does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
-            if (b == SP || b == HTAB) {
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
+                if (b != SP && b != HTAB) {
+                    break;
+                }
                 position++;
-                continue;
             }
-            break;
+            if (position < limit) {
+                break;
+            }
+            ensureLookahead(1, "HTTP header line does not fit into the input buffer");
         }
 
         int valueStart = position;
         int trailingWhitespace = 0;
 
+        // Parse header field value
         while (true) {
+            // Fast path: scan buffered bytes directly
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
+
+                if (b == CR || b == LF) {
+                    int valueEnd = position - trailingWhitespace;
+                    String value = latin1String(valueStart, valueEnd - valueStart);
+                    consumeLineEnding("HTTP header line must end with CRLF");
+                    return new Header(nameIn, nameLower, value);
+                }
+
+                if (!HEADER_VALUE_OCTET[b]) {
+                    throw new BadRequestException("Invalid octet in header field value: 0x" + Integer.toHexString(b));
+                }
+
+                position++;
+                if (b == SP || b == HTAB) {
+                    trailingWhitespace++;
+                } else {
+                    trailingWhitespace = 0;
+                }
+            }
+
+            // Slow path: need more data
             valueStart = ensureTokenByte(valueStart, "HTTP header line does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
-
-            if (b == CR || b == LF) {
-                break;
-            }
-
-            if (!isHeaderValueOctet(b)) {
-                throw new BadRequestException("Invalid octet in header field value: 0x" + Integer.toHexString(b));
-            }
-
-            position++;
-            if (b == SP || b == HTAB) {
-                trailingWhitespace++;
-            } else {
-                trailingWhitespace = 0;
-            }
         }
-
-        int valueEnd = position - trailingWhitespace;
-        String value = latin1String(valueStart, valueEnd - valueStart);
-        consumeLineEnding("HTTP header line must end with CRLF");
-
-        return new Header(nameIn, nameIn.toLowerCase(Locale.ROOT), value);
     }
 
       /**
@@ -616,6 +674,26 @@ public class HttpInput extends InputStream {
     }
 
     private boolean consumeEmptyLine() throws IOException {
+        int avail = limit - position;
+
+        // Fast path: enough bytes buffered
+        if (avail >= 2) {
+            int b = buffer[position] & 0xFF;
+            if (b == LF) {
+                position++;
+                return true;
+            }
+            if (b == CR) {
+                if ((buffer[position + 1] & 0xFF) != LF) {
+                    throw new BadRequestException("Invalid bare CR in header section");
+                }
+                position += 2;
+                return true;
+            }
+            return false;
+        }
+
+        // Slow path: may need to read more
         ensureLookahead(1, "HTTP header line does not fit into the input buffer");
         int b = buffer[position] & 0xFF;
 
@@ -637,17 +715,27 @@ public class HttpInput extends InputStream {
         return true;
     }
 
-    private int expectTokenByte(int tokenStart, int expected, String message) throws IOException {
-        tokenStart = ensureTokenByte(tokenStart, "HTTP token does not fit into the input buffer");
-        int actual = buffer[position] & 0xFF;
-        if (actual != expected) {
-            throw new BadRequestException(message + ": expected '" + (char) expected + "' but got 0x" + Integer.toHexString(actual));
-        }
-        position++;
-        return tokenStart;
-    }
-
     private void consumeLineEnding(String message) throws IOException {
+        int avail = limit - position;
+
+        // Fast path: enough bytes buffered to check without ensureLookahead
+        if (avail >= 2) {
+            int b = buffer[position] & 0xFF;
+            if (b == LF) {
+                position++;
+                return;
+            }
+            if (b == CR) {
+                if ((buffer[position + 1] & 0xFF) != LF) {
+                    throw new BadRequestException("Invalid bare CR in HTTP line ending");
+                }
+                position += 2;
+                return;
+            }
+            throw new BadRequestException(message + ": expected CRLF or LF");
+        }
+
+        // Slow path: may need to read more
         ensureLookahead(1, "HTTP line ending does not fit into the input buffer");
         int b = buffer[position] & 0xFF;
 
@@ -805,9 +893,5 @@ public class HttpInput extends InputStream {
 
     private static boolean isFieldVchar(int b) {
         return (b >= 0x21 && b <= 0x7E) || (b >= 0x80 && b <= 0xFF);
-    }
-
-    private static boolean isHeaderValueOctet(int b) {
-        return b == SP || b == HTAB || (b >= 0x21 && b <= 0x7E) || (b >= 0x80 && b <= 0xFF);
     }
 }
