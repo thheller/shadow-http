@@ -390,130 +390,36 @@ public class HttpInput extends InputStream {
             throw new IllegalArgumentException("maxSize must be >= 0");
         }
 
-        String chunkLine = readChunkLine();
-        int length = chunkLine.length();
-        int index = 0;
-        int digitCount = 0;
+        // Parse chunk-size: 1*HEXDIG directly from buffer
         long chunkSize = 0;
+        int digitCount = 0;
 
-        while (index < length) {
-            int digit = hexDigitValue(chunkLine.charAt(index));
-            if (digit < 0) {
-                break;
+        hexLoop:
+        while (true) {
+            while (position < limit) {
+                int digit = hexDigitValue(buffer[position] & 0xFF);
+                if (digit < 0) {
+                    break hexLoop;
+                }
+                if (chunkSize > (Long.MAX_VALUE - digit) / 16L) {
+                    throw new BadRequestException("Chunk size overflow");
+                }
+                chunkSize = (chunkSize * 16L) + digit;
+                digitCount++;
+                if (digitCount > 16) {
+                    throw new BadRequestException("Chunk size field too long");
+                }
+                position++;
             }
-
-            if (chunkSize > (Long.MAX_VALUE - digit) / 16L) {
-                throw new BadRequestException("Chunk size overflow");
-            }
-
-            chunkSize = (chunkSize * 16L) + digit;
-            digitCount++;
-            if (digitCount > 16) {
-                throw new BadRequestException("Chunk size field too long");
-            }
-
-            index++;
+            ensureLookahead(1, "Chunk header line does not fit into the input buffer");
         }
 
         if (digitCount == 0) {
             throw new BadRequestException("Missing chunk-size");
         }
 
-        Map<String, String> extensions = new LinkedHashMap<>();
-
-        while (true) {
-            index = skipChunkWhitespace(chunkLine, index);
-            if (index >= length) {
-                break;
-            }
-
-            int delimiter = chunkLine.charAt(index);
-            if (delimiter != ';') {
-                throw new BadRequestException(
-                        "Expected ';' or CRLF in chunk extension, got: 0x" + Integer.toHexString(delimiter));
-            }
-
-            index++;
-            index = skipChunkWhitespace(chunkLine, index);
-
-            int nameStart = index;
-            while (index < length && isTchar(chunkLine.charAt(index))) {
-                index++;
-            }
-
-            if (index == nameStart) {
-                throw new BadRequestException("Empty chunk extension name");
-            }
-
-            String name = chunkLine.substring(nameStart, index);
-            index = skipChunkWhitespace(chunkLine, index);
-
-            String value = null;
-            if (index < length && chunkLine.charAt(index) == '=') {
-                index++;
-                index = skipChunkWhitespace(chunkLine, index);
-
-                if (index >= length) {
-                    throw new BadRequestException("Invalid chunk extension value");
-                }
-
-                if (chunkLine.charAt(index) == '"') {
-                    StringBuilder quoted = new StringBuilder();
-                    index++;
-
-                    while (true) {
-                        if (index >= length) {
-                            throw new BadRequestException("Unterminated quoted-string in chunk extension");
-                        }
-
-                        int ch = chunkLine.charAt(index++);
-                        if (ch == '"') {
-                            break;
-                        }
-
-                        if (ch == '\\') {
-                            if (index >= length) {
-                                throw new BadRequestException("Unterminated quoted-pair in chunk extension");
-                            }
-
-                            int escaped = chunkLine.charAt(index++);
-                            if (escaped != HTAB && escaped != SP && !isFieldVchar(escaped)) {
-                                throw new BadRequestException(
-                                        "Invalid quoted-pair in chunk extension: 0x" + Integer.toHexString(escaped));
-                            }
-
-                            quoted.append((char) escaped);
-                            continue;
-                        }
-
-                        if (ch != HTAB && ch != SP && ch != 0x21
-                                && (ch < 0x23 || ch > 0x5B)
-                                && (ch < 0x5D || ch > 0x7E)
-                                && (ch < 0x80 || ch > 0xFF)) {
-                            throw new BadRequestException(
-                                    "Invalid octet in chunk extension quoted-string: 0x" + Integer.toHexString(ch));
-                        }
-
-                        quoted.append((char) ch);
-                    }
-
-                    value = quoted.toString();
-                } else {
-                    int valueStart = index;
-                    while (index < length && isTchar(chunkLine.charAt(index))) {
-                        index++;
-                    }
-
-                    if (index == valueStart) {
-                        throw new BadRequestException("Invalid chunk extension value");
-                    }
-
-                    value = chunkLine.substring(valueStart, index);
-                }
-            }
-
-            extensions.put(name, value);
-        }
+        // Parse optional chunk extensions, then consume CRLF
+        Map<String, String> extensions = readChunkExtensions();
 
         if (chunkSize == 0) {
             List<Header> trailers = new ArrayList<>();
@@ -823,43 +729,144 @@ public class HttpInput extends InputStream {
         }
     }
 
-    private String readChunkLine() throws IOException {
-        int tokenStart = position;
+    /**
+     * Parses optional chunk extensions and consumes the trailing CRLF.
+     * Called after the chunk-size hex digits have already been parsed.
+     */
+    private Map<String, String> readChunkExtensions() throws IOException {
+        // Skip OWS before checking for extensions or line ending
+        skipOWS();
+
+        ensureLookahead(1, "Chunk header line does not fit into the input buffer");
+        int b = buffer[position] & 0xFF;
+
+        // Fast path: no extensions
+        if (b == CR || b == LF) {
+            consumeLineEnding("Chunk header line must end with CRLF");
+            return Collections.emptyMap();
+        }
+
+        // Slow path: parse extensions
+        Map<String, String> extensions = new LinkedHashMap<>();
 
         while (true) {
-            tokenStart = ensureTokenByte(tokenStart, "Chunk header line does not fit into the input buffer");
-            int b = buffer[position] & 0xFF;
-
-            if (b == LF) {
-                String line = latin1String(tokenStart, position - tokenStart);
-                position++;
-                return line;
+            if (b != ';') {
+                throw new BadRequestException(
+                        "Expected ';' or CRLF in chunk extension, got: 0x" + Integer.toHexString(b));
             }
+            position++; // skip ';'
 
-            if (b == CR) {
-                String line = latin1String(tokenStart, position - tokenStart);
-                position++;
-                ensureLookahead(1, "Chunk header line does not fit into the input buffer");
-                if ((buffer[position] & 0xFF) != LF) {
-                    throw new BadRequestException("Invalid bare CR in chunk header");
+            skipOWS();
+
+            // Parse extension name: 1*tchar
+            int nameStart = position;
+            while (true) {
+                while (position < limit) {
+                    if (!TCHAR[buffer[position] & 0xFF]) break;
+                    position++;
                 }
-                position++;
-                return line;
+                if (position < limit) break;
+                nameStart = ensureTokenByte(nameStart, "Chunk header line does not fit into the input buffer");
             }
 
-            position++;
+            if (position == nameStart) {
+                throw new BadRequestException("Empty chunk extension name");
+            }
+            String name = asciiString(nameStart, position - nameStart);
+
+            skipOWS();
+
+            String value = null;
+            ensureLookahead(1, "Chunk header line does not fit into the input buffer");
+
+            if ((buffer[position] & 0xFF) == '=') {
+                position++; // skip '='
+                skipOWS();
+
+                ensureLookahead(1, "Invalid chunk extension value");
+
+                if ((buffer[position] & 0xFF) == '"') {
+                    position++; // skip opening '"'
+                    value = readChunkQuotedString();
+                } else {
+                    // Token value: 1*tchar
+                    int valueStart = position;
+                    while (true) {
+                        while (position < limit) {
+                            if (!TCHAR[buffer[position] & 0xFF]) break;
+                            position++;
+                        }
+                        if (position < limit) break;
+                        valueStart = ensureTokenByte(valueStart, "Chunk header line does not fit into the input buffer");
+                    }
+                    if (position == valueStart) {
+                        throw new BadRequestException("Invalid chunk extension value");
+                    }
+                    value = asciiString(valueStart, position - valueStart);
+                }
+            }
+
+            extensions.put(name, value);
+
+            skipOWS();
+
+            ensureLookahead(1, "Chunk header line does not fit into the input buffer");
+            b = buffer[position] & 0xFF;
+
+            if (b == CR || b == LF) {
+                consumeLineEnding("Chunk header line must end with CRLF");
+                return extensions;
+            }
         }
     }
 
-    private int skipChunkWhitespace(String chunkLine, int index) {
-        while (index < chunkLine.length()) {
-            char ch = chunkLine.charAt(index);
-            if (ch != SP && ch != HTAB) {
-                break;
+    private void skipOWS() throws IOException {
+        while (true) {
+            while (position < limit) {
+                int b = buffer[position] & 0xFF;
+                if (b != SP && b != HTAB) return;
+                position++;
             }
-            index++;
+            ensureLookahead(1, "Chunk header line does not fit into the input buffer");
         }
-        return index;
+    }
+
+    private String readChunkQuotedString() throws IOException {
+        StringBuilder quoted = new StringBuilder();
+
+        while (true) {
+            ensureLookahead(1, "Unterminated quoted-string in chunk extension");
+            int ch = buffer[position] & 0xFF;
+            position++;
+
+            if (ch == '"') {
+                return quoted.toString();
+            }
+
+            if (ch == '\\') {
+                ensureLookahead(1, "Unterminated quoted-pair in chunk extension");
+                int escaped = buffer[position] & 0xFF;
+                position++;
+
+                if (escaped != HTAB && escaped != SP && !isFieldVchar(escaped)) {
+                    throw new BadRequestException(
+                            "Invalid quoted-pair in chunk extension: 0x" + Integer.toHexString(escaped));
+                }
+
+                quoted.append((char) escaped);
+                continue;
+            }
+
+            if (ch != HTAB && ch != SP && ch != 0x21
+                    && (ch < 0x23 || ch > 0x5B)
+                    && (ch < 0x5D || ch > 0x7E)
+                    && (ch < 0x80 || ch > 0xFF)) {
+                throw new BadRequestException(
+                        "Invalid octet in chunk extension quoted-string: 0x" + Integer.toHexString(ch));
+            }
+
+            quoted.append((char) ch);
+        }
     }
 
     private String asciiString(int start, int length) {
