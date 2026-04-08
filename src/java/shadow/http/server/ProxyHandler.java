@@ -189,7 +189,11 @@ public class ProxyHandler implements HttpHandler {
                     continue;
                 }
 
-                request.setResponseHeader(header.name, header.value);
+                if ("set-cookie".equals(header.name) && !request.isSecure()) {
+                    request.setResponseHeader(header.name, stripSecureFlag(header.value));
+                } else {
+                    request.setResponseHeader(header.name, header.value);
+                }
             }
 
             // Let the server handle chunking/compression itself
@@ -356,6 +360,13 @@ public class ProxyHandler implements HttpHandler {
 
     private static boolean isBodylessStatus(int status) {
         return status == 204 || status == 304 || (status >= 100 && status < 200);
+    }
+
+    private static final java.util.regex.Pattern SECURE_FLAG =
+            java.util.regex.Pattern.compile("(;\\s*)(?i:Secure)(\\s*(?:;|$))");
+
+    private static String stripSecureFlag(String value) {
+        return SECURE_FLAG.matcher(value).replaceAll("$2");
     }
 
     /**
