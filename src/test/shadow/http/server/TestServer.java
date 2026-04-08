@@ -53,7 +53,7 @@ public class TestServer {
         SSLContext ctx = Server.sslContextForFile("ssl/keystore.jks", "changeit");
         Server server2 = new Server();
         HttpClient client = HttpClient.newBuilder().build();
-        server2.setHandler(new ProxyHandler(client, URI.create("http://localhost:5007")));
+        server2.setHandler(new ProxyHandler(URI.create("http://localhost:9630")));
         server2.startSSL(ctx, 5017);
 
         System.out.println("Server started on http://localhost:5007");
