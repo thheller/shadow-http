@@ -4,7 +4,7 @@
     [shadow.http.server.ring :as ring])
   (:import
     [java.util List]
-    [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketHandler]))
+    [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketConnection WebSocketHandler]))
 
 (defmacro vthread [& body]
   `(let [res# (async/chan 1)]
@@ -26,7 +26,7 @@
 (defn file-handler [path]
   (FileHandler/forPath path))
 
-(deftype CoreAsyncWebSocketHandler [context write-loop ws-in ws-out ws-loop]
+(deftype CoreAsyncWebSocketHandler [^WebSocketConnection context write-loop ws-in ws-out ws-loop]
   WebSocketHandler
   (start [this new-context]
     (let [write-loop
@@ -40,6 +40,9 @@
 
   (onText [this text]
     (async/>!! ws-in text))
+
+  (onPing [this payload]
+    (.sendPong context payload))
 
   (onClose [this status reason]
     (async/close! ws-in)
