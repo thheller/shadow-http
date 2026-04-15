@@ -733,4 +733,43 @@ public class IntegrationTest {
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }
+
+    @Test
+    void webSocketMessageExceeding16BitLength() throws Exception {
+        // Build a message whose server echo response exceeds 65535 bytes,
+        // triggering the 64-bit payload length encoding in sendFrame.
+        // This verifies the fix for int shift wrapping on 64-bit lengths.
+        StringBuilder large = new StringBuilder();
+        for (int i = 0; i < 2000; i++) {
+            large.append("line ").append(i).append(": padding text to exceed 16-bit frame length\n");
+        }
+        String largeMsg = large.toString();
+        assertTrue(largeMsg.length() > 65535, "test message must exceed 16-bit length threshold");
+
+        var received = new CopyOnWriteArrayList<String>();
+        var latch = new CountDownLatch(1);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    received.add(sb.toString());
+                    sb.setLength(0);
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        ws.sendText(largeMsg, true);
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "timed out waiting for large echo");
+        assertEquals(1, received.size());
+        assertEquals("echo: " + largeMsg, received.get(0));
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
 }

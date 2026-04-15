@@ -203,8 +203,9 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             out.write((length & 0xFF));
         } else {
             out.write(127);
+            long len64 = length;
             for (int i = 7; i >= 0; i--) {
-                out.write(((length >> (8 * i)) & 0xFF));
+                out.write((int) ((len64 >> (8 * i)) & 0xFF));
             }
         }
 
