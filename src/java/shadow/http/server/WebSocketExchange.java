@@ -203,10 +203,16 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             out.write((length & 0xFF));
         } else {
             out.write(127);
-            long len64 = length;
-            for (int i = 7; i >= 0; i--) {
-                out.write((int) ((len64 >> (8 * i)) & 0xFF));
-            }
+            // length is a positive int, so the high 32 bits of the 64-bit extended length are always 0
+            // wonder who sends single frames that don't fit 32 bits, but we capped it at MAX_FRAME_SIZE
+            out.write(0);
+            out.write(0);
+            out.write(0);
+            out.write(0);
+            out.write((length >> 24) & 0xFF);
+            out.write((length >> 16) & 0xFF);
+            out.write((length >> 8) & 0xFF);
+            out.write(length & 0xFF);
         }
 
         out.write(payload, offset, length);
