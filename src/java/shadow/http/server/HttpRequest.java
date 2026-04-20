@@ -295,7 +295,7 @@ public class HttpRequest {
                 requestBody = new ContentLengthInputStream(exchange.in, requestBodyLength);
             }
             case CHUNKED -> {
-                requestBody = new ChunkedInputStream(exchange);
+                requestBody = new ChunkedInputStream(exchange.in);
             }
         }
 

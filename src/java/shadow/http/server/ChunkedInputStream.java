@@ -5,27 +5,27 @@ import java.io.InputStream;
 
 /**
  * An InputStream backed by chunked Transfer-Encoding.
- * Reads chunks via {@link HttpExchange#readChunk(int)} and presents them as a
+ * Reads chunks via {@link HttpInput#readChunk(int)} and presents them as a
  * contiguous byte stream. Returns EOF after the terminal (zero-length) chunk
  * has been consumed. Does not close the underlying stream.
  */
-class ChunkedInputStream extends InputStream {
+public class ChunkedInputStream extends InputStream {
 
     private static final int DEFAULT_MAX_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
 
-    private final HttpExchange exchange;
+    private final HttpInput in;
     private final int maxChunkSize;
 
     private byte[] currentChunk;
     private int currentOffset;
     private boolean eof;
 
-    ChunkedInputStream(HttpExchange exchange) {
-        this(exchange, DEFAULT_MAX_CHUNK_SIZE);
+    public ChunkedInputStream(HttpInput in) {
+        this(in, DEFAULT_MAX_CHUNK_SIZE);
     }
 
-    ChunkedInputStream(HttpExchange exchange, int maxChunkSize) {
-        this.exchange = exchange;
+    public ChunkedInputStream(HttpInput in, int maxChunkSize) {
+        this.in = in;
         this.maxChunkSize = maxChunkSize;
         this.currentChunk = null;
         this.currentOffset = 0;
@@ -89,7 +89,7 @@ class ChunkedInputStream extends InputStream {
      */
     private boolean ensureChunkData() throws IOException {
         while (currentChunk == null || currentOffset >= currentChunk.length) {
-            Chunk chunk = exchange.in.readChunk(maxChunkSize);
+            Chunk chunk = in.readChunk(maxChunkSize);
             if (chunk.isLast()) {
                 eof = true;
                 currentChunk = null;
