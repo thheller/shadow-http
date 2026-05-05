@@ -100,6 +100,11 @@ public class IntegrationTest {
                         }
 
                         @Override
+                        public void onBinary(byte[] payload) throws IOException {
+                            context.sendBinary(payload);
+                        }
+
+                        @Override
                         public void onClose(int statusCode, String reason) {
                         }
                     });
@@ -585,6 +590,37 @@ public class IntegrationTest {
         assertTrue(latch.await(2, TimeUnit.SECONDS), "timed out waiting for echo");
         assertEquals(1, received.size());
         assertEquals("echo: hello", received.get(0));
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
+
+    @Test
+    void webSocketEchoBinary() throws Exception {
+        var received = new CopyOnWriteArrayList<ByteBuffer>();
+        var latch = new CountDownLatch(1);
+
+        ByteBuffer msg = ByteBuffer.wrap(new byte[] { 1, 2, 3, 4, 5 });
+
+        System.out.println(msg);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
+            @Override
+            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
+                received.add(data);
+                if (last) {
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        ws.sendBinary(msg, true);
+        msg.position(0);
+        assertTrue(latch.await(2, TimeUnit.SECONDS), "timed out waiting for echo");
+        assertEquals(1, received.size());
+        System.out.println(received.get(0));
+        assertEquals(msg, received.get(0));
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }

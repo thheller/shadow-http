@@ -58,8 +58,13 @@ public class PerMessageDeflate implements AutoCloseable {
      * @param input uncompressed payload bytes
      * @return compressed payload with the trailing 0x00 0x00 0xff 0xff removed
      */
+
     public byte[] compress(byte[] input) throws IOException {
-        if (input.length == 0) {
+        return compress(input, 0, input.length);
+    }
+
+    public byte[] compress(byte[] input, int offset, int length) throws IOException {
+        if (length == 0) {
             return new byte[0];
         }
 
@@ -67,7 +72,7 @@ public class PerMessageDeflate implements AutoCloseable {
             deflater.reset();
         }
 
-        deflater.setInput(input);
+        deflater.setInput(input, offset, length);
 
         // Use SYNC_FLUSH (not finish()) so the deflater remains usable for subsequent
         // messages.  SYNC_FLUSH produces the 0x00 0x00 0xff 0xff empty stored block at

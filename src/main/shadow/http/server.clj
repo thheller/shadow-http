@@ -33,13 +33,27 @@
           (vthread
             (loop []
               (when-some [msg (async/<!! ws-out)]
-                (.sendText new-context msg)
-                (recur))))]
+                (cond
+                  (string? msg)
+                  (do (.sendText new-context msg)
+                      (recur))
+
+                  (= byte/1 (class msg))
+                  (do (.sendBinary new-context msg)
+                      (recur))
+
+                  :else
+                  ()
+
+                  ))))]
 
       (CoreAsyncWebSocketHandler. new-context write-loop ws-in ws-out ws-loop)))
 
   (onText [this text]
     (async/>!! ws-in text))
+
+  (onBinary [this bin]
+    (async/>!! ws-in bin))
 
   (onPing [this payload]
     (.sendPong context payload))

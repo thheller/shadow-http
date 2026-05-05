@@ -144,39 +144,50 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     @Override
     public void sendText(String text) throws IOException {
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+
+        // need to lock in case multiple threads try to send messages
         writeLock.lock();
         try {
-            // need to lock in case multiple threads try to send messages
-            sendTextInternal(text);
+            sendInternal(WebSocketFrame.OPCODE_TEXT, bytes, 0, bytes.length);
         } finally {
             writeLock.unlock();
         }
     }
 
-    private void sendTextInternal(String text) throws IOException {
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+    @Override
+    public void sendBinary(byte[] bytes, int offset, int length) throws IOException {
+        // need to lock in case multiple threads try to send messages
+        writeLock.lock();
+        try {
+            sendInternal(WebSocketFrame.OPCODE_BINARY, bytes, offset, length);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private void sendInternal(int opcode, byte[] bytes, int offset, int length) throws IOException {
 
         // Only compress when compression was negotiated AND the payload is large enough
         // to benefit.  RFC 7692 Section 6.1 explicitly allows skipping compression for
         // any individual message (RSV1=0); small messages typically expand under deflate.
-        boolean rsv1 = perMessageDeflate != null && bytes.length >= COMPRESSION_MIN_SIZE;
+        boolean rsv1 = perMessageDeflate != null && length >= COMPRESSION_MIN_SIZE;
 
         if (rsv1) {
             // Compress the whole message payload (RFC 7692 Section 7.2.1), then send as
             // frame(s) with RSV1=1 on the first frame only (the "Per-Message Compressed" bit).
-            bytes = perMessageDeflate.compress(bytes);
+            bytes = perMessageDeflate.compress(bytes, offset, length);
+            length = bytes.length;
+            offset = 0;
         }
 
-        int length = bytes.length;
-
         if (length <= MAX_FRAME_SIZE) {
-            sendFrame(out, true, rsv1, WebSocketFrame.OPCODE_TEXT, bytes, 0, length);
+            sendFrame(out, true, rsv1, opcode, bytes, 0, length);
             return;
         }
 
         // Send first frame with OPCODE_TEXT and fin=false
-        int offset = 0;
-        sendFrame(out, false, rsv1, WebSocketFrame.OPCODE_TEXT, bytes, offset, MAX_FRAME_SIZE);
+        sendFrame(out, false, rsv1, opcode, bytes, offset, MAX_FRAME_SIZE);
         offset += MAX_FRAME_SIZE;
 
         // Send continuation frames (RSV1 MUST NOT be set on non-first fragments per RFC 7692 Section 6.1)
