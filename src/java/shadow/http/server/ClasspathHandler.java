@@ -3,8 +3,15 @@ package shadow.http.server;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.JarURLConnection;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 /**
  * Serves files from a ClassLoader using a configurable prefix.
@@ -54,36 +61,73 @@ public class ClasspathHandler implements HttpHandler {
             return;
         }
 
-        // Map URI → classpath resource path
-        // Don't attempt a direct lookup for directory-like URIs (ending with '/') since
-        // ClassLoader.getResource("public/") can return a valid URL pointing at a jar
-        // directory entry, which is not a servable file.
-        String resourcePath;
-        URL url;
+        uri = prefix + uri;
 
-        final boolean useIndexFiles = request.getConfig().isUseIndexFiles();
-
-        if (uri.endsWith("/") && useIndexFiles) {
-            resourcePath = prefix + uri + "index.html";
-            url = findResource(resourcePath);
-        } else {
-            resourcePath = prefix + uri;
-            url = findResource(resourcePath);
-
-            if (url == null && useIndexFiles) {
-                // Try index.html fallback for extensionless paths
-                resourcePath = prefix + uri + "/index.html";
-                url = findResource(resourcePath);
-            }
-        }
+        URL url = findResource(uri);
 
         if (url == null) {
             return;
         }
 
+        boolean useIndexFiles = request.getConfig().useIndexFiles;
+
         URLConnection conn = url.openConnection();
-        // don't cache filesystem lookups, fine to cache files from jars since they can't change
-        conn.setUseCaches(!"file".equals(url.getProtocol()));
+
+        if (conn instanceof JarURLConnection jarc) {
+            conn.setUseCaches(true);
+
+            String entryName = jarc.getEntryName();
+
+            if (entryName == null) {
+                // root of jar, not servable
+                return;
+            }
+
+            try (JarFile jar = jarc.getJarFile()) {
+                JarEntry direct = jar.getJarEntry(entryName);
+                if (direct != null && direct.isDirectory()) {
+                    if (!useIndexFiles) {
+                        // not serving directory
+                        return;
+                    }
+
+                    URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
+                    if (index == null) {
+                        // no index, still not serving directory
+                        return;
+                    }
+
+                    url = index;
+                    conn = index.openConnection();
+                }
+            }
+
+        } else if ("file".equals(url.getProtocol())) {
+            conn.setUseCaches(false);
+
+            try {
+                Path path = Paths.get(url.toURI());
+                if (Files.isDirectory(path)) {
+                    if (!useIndexFiles) {
+                        // not serving directory
+                        return;
+                    }
+
+                    URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
+                    if (index == null) {
+                        // no index, still not serving directory
+                        return;
+                    }
+
+                    url = index;
+                    conn = index.openConnection();
+                }
+            } catch (URISyntaxException e) {
+            }
+        } else {
+            // only serving file and jar urls. not sure what else may be here
+            return;
+        }
 
         long lastModifiedMillis = conn.getLastModified();
         String lastModified = lastModifiedMillis > 0
@@ -103,6 +147,7 @@ public class ClasspathHandler implements HttpHandler {
         final long contentLength = conn.getContentLengthLong();
 
         // Derive filename for MIME type lookup
+        final String resourcePath = url.getPath();
         final String filename = resourcePath.substring(resourcePath.lastIndexOf('/') + 1);
         final String mimeType = server.config.guessMimeType(filename);
 

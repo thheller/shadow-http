@@ -112,6 +112,22 @@ public class HttpRequest {
         return requestHeaders.containsKey(name);
     }
 
+    public int getResponseStatus() {
+        return responseStatus;
+    }
+
+    public String getResponseStatusText() {
+        return responseStatusText;
+    }
+
+    public Map<String, List<String>> getResponseHeaders() {
+        return responseHeaders;
+    }
+
+    public long getResponseBytesWritten() {
+        return responseBytesWritten;
+    }
+
     // the assumption is that the client is a browser, and they usually do not send duplicate headers
     // but if something actually needs to check it can
     public boolean hasRepeatedRequestHeaders() {
