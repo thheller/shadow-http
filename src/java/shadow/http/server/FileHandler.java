@@ -41,11 +41,10 @@ public class FileHandler implements HttpHandler {
             return;
         }
 
-        if (Files.isDirectory(file)) {
+        if (Files.isDirectory(file) && request.getConfig().useIndexFiles) {
             file = file.resolve("index.html");
         }
 
-        // sanity check, might have been deleted and watcher hasn't updated yet
         if (!servableFile(file)) {
             return;
         }

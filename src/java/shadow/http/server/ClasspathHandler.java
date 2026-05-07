@@ -61,14 +61,16 @@ public class ClasspathHandler implements HttpHandler {
         String resourcePath;
         URL url;
 
-        if (uri.endsWith("/")) {
+        final boolean useIndexFiles = request.getConfig().isUseIndexFiles();
+
+        if (uri.endsWith("/") && useIndexFiles) {
             resourcePath = prefix + uri + "index.html";
             url = findResource(resourcePath);
         } else {
             resourcePath = prefix + uri;
             url = findResource(resourcePath);
 
-            if (url == null) {
+            if (url == null && useIndexFiles) {
                 // Try index.html fallback for extensionless paths
                 resourcePath = prefix + uri + "/index.html";
                 url = findResource(resourcePath);

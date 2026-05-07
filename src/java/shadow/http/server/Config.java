@@ -21,6 +21,7 @@ public class Config {
     int outputBufferSize = 65536; //  32768;
 
     long maximumRequestBodySize = 10_000_000;
+    boolean useIndexFiles = true;
 
     public Config() {
         mimeTypes.put("html", "text/html");
@@ -100,6 +101,14 @@ public class Config {
 
     public void setOutputBufferSize(int outputBufferSize) {
         this.outputBufferSize = outputBufferSize;
+    }
+
+    public boolean isUseIndexFiles() {
+        return useIndexFiles;
+    }
+
+    public void setUseIndexFiles(boolean useIndexFiles) {
+        this.useIndexFiles = useIndexFiles;
     }
 
     public String guessMimeType(String filename) {

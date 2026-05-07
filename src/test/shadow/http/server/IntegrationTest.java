@@ -601,8 +601,6 @@ public class IntegrationTest {
 
         ByteBuffer msg = ByteBuffer.wrap(new byte[] { 1, 2, 3, 4, 5 });
 
-        System.out.println(msg);
-
         WebSocket ws = wsBuilder("/ws").buildAsync(wsUri("/ws"), new WebSocket.Listener() {
             @Override
             public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
@@ -619,7 +617,6 @@ public class IntegrationTest {
         msg.position(0);
         assertTrue(latch.await(2, TimeUnit.SECONDS), "timed out waiting for echo");
         assertEquals(1, received.size());
-        System.out.println(received.get(0));
         assertEquals(msg, received.get(0));
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();

@@ -92,6 +92,10 @@ public class HttpRequest {
         }
     }
 
+    public Config getConfig() {
+        return exchange.connection.getServer().getConfig();
+    }
+
     public boolean isSecure() {
         return exchange.connection.isSecure();
     }
