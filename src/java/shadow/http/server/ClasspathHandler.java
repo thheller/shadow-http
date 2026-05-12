@@ -83,23 +83,24 @@ public class ClasspathHandler implements HttpHandler {
                 return;
             }
 
-            try (JarFile jar = jarc.getJarFile()) {
-                JarEntry direct = jar.getJarEntry(entryName);
-                if (direct != null && direct.isDirectory()) {
-                    if (!useIndexFiles) {
-                        // not serving directory
-                        return;
-                    }
-
-                    URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
-                    if (index == null) {
-                        // no index, still not serving directory
-                        return;
-                    }
-
-                    url = index;
-                    conn = index.openConnection();
+            // must not use try-with-resources here since that closes the jar file
+            // which then later causes conn.getInputStream() to fail with zip file is closed
+            JarFile jar = jarc.getJarFile();
+            JarEntry direct = jar.getJarEntry(entryName);
+            if (direct != null && direct.isDirectory()) {
+                if (!useIndexFiles) {
+                    // not serving directory
+                    return;
                 }
+
+                URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
+                if (index == null) {
+                    // no index, still not serving directory
+                    return;
+                }
+
+                url = index;
+                conn = index.openConnection();
             }
 
         } else if ("file".equals(url.getProtocol())) {
