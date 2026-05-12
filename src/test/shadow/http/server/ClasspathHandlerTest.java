@@ -36,6 +36,16 @@ public class ClasspathHandlerTest {
         assertTrue(response.contains("cache-control: private, no-cache"));
     }
 
+    @Test
+    void servesExistingResourceFromJar() throws IOException {
+        String response = TestConnection.run(new ClasspathHandler("/clojure"),
+                "GET /core.clj HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "\r\n");
+
+        assertTrue(response.startsWith("HTTP/1.1 200 "), "expected 200, got: " + response.substring(0, response.indexOf('\n')));
+    }
+
     // -----------------------------------------------------------------------
     // Missing resource → no response (404 comes from the server fallback)
     // -----------------------------------------------------------------------
