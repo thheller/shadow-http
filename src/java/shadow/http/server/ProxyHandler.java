@@ -84,6 +84,26 @@ public class ProxyHandler implements HttpHandler {
         return socket;
     }
 
+    // Build target URI by appending the request target to the configured base.
+    //
+    // URI.resolve replaces the base path outright when the reference is absolute,
+    // and request targets always are, so the base path has to be prepended
+    // explicitly. Without this a target of "http://localhost:7000/my-server"
+    // forwards "/api/ping" as "/api/ping" instead of "/my-server/api/ping".
+    private URI resolveTarget(String requestTarget) {
+        String basePath = target.getRawPath();
+
+        if (basePath == null || basePath.isEmpty() || basePath.equals("/")) {
+            return target.resolve(requestTarget);
+        }
+
+        if (basePath.endsWith("/")) {
+            basePath = basePath.substring(0, basePath.length() - 1);
+        }
+
+        return target.resolve(basePath + requestTarget);
+    }
+
     @Override
     public void handle(HttpRequest request) throws IOException {
         if (isWebSocketUpgrade(request)) {
@@ -91,8 +111,7 @@ public class ProxyHandler implements HttpHandler {
             return;
         }
 
-        // Build target URI by appending the request target to the configured base
-        var uri = target.resolve(request.requestTarget);
+        var uri = resolveTarget(request.requestTarget);
 
         try (Socket socket = openSocket()) {
             OutputStream sockOut = new BufferedOutputStream(socket.getOutputStream(), 8192);
@@ -247,7 +266,7 @@ public class ProxyHandler implements HttpHandler {
     }
 
     private void handleWebSocketProxy(HttpRequest request) throws IOException {
-        var uri = target.resolve(request.requestTarget);
+        var uri = resolveTarget(request.requestTarget);
         Socket upstreamSocket = openSocket();
 
         try {
