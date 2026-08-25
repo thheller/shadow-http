@@ -29,8 +29,10 @@ import static org.junit.jupiter.api.Assertions.*;
 public class IntegrationTest {
 
     private static Server server;
+    private static Server proxyServer;
     private static HttpClient client;
     private static int port;
+    private static int proxyPort;
 
     @BeforeAll
     static void startServer() throws Exception {
@@ -144,6 +146,11 @@ public class IntegrationTest {
                         }
                     });
                 }
+                case "/cookie" -> {
+                    request.setResponseHeader("set-cookie", "session=abc; Path=/; Secure; HttpOnly");
+                    request.setResponseHeader("content-type", "text/plain");
+                    request.writeString("ok");
+                }
             }
         };
 
@@ -153,11 +160,19 @@ public class IntegrationTest {
 
         port = server.getSocket().getLocalPort();
 
+        proxyServer = new Server();
+        proxyServer.setHandler(new ProxyHandler(URI.create("http://127.0.0.1:" + port)));
+        proxyServer.start(0);
+        proxyPort = proxyServer.getSocket().getLocalPort();
+
         client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build();
     }
 
     @AfterAll
     static void stopServer() throws Exception {
+        if (proxyServer != null) {
+            proxyServer.stop();
+        }
         if (server != null) {
             server.stop();
         }
@@ -165,6 +180,10 @@ public class IntegrationTest {
 
     private HttpRequest.Builder request(String path) {
         return HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).timeout(Duration.ofMillis(500));
+    }
+
+    private HttpRequest.Builder proxyRequest(String path) {
+        return HttpRequest.newBuilder(URI.create("http://localhost:" + proxyPort + path)).timeout(Duration.ofMillis(500));
     }
 
     // -----------------------------------------------------------------------
@@ -802,6 +821,169 @@ public class IntegrationTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS), "timed out waiting for large echo");
         assertEquals(1, received.size());
         assertEquals("echo: " + largeMsg, received.get(0));
+
+        ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
+
+    // -----------------------------------------------------------------------
+    // Proxy handler tests
+    // -----------------------------------------------------------------------
+
+    private URI proxyWsUri(String path) {
+        return URI.create("ws://localhost:" + proxyPort + path);
+    }
+
+    @Test
+    void proxyForwardsGet() throws Exception {
+        var response = client.send(
+                proxyRequest("/hello").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertEquals("hello world", response.body());
+        assertEquals("text/plain", response.headers().firstValue("content-type").orElse(""));
+        assertEquals(1, response.headers().allValues("content-length").size());
+    }
+
+    @Test
+    void proxyForwardsFile() throws Exception {
+        var response = client.send(
+                proxyRequest("/hello.txt").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertEquals("Hello from test file!", response.body());
+        assertEquals("text/plain", response.headers().firstValue("content-type").orElse(""));
+    }
+
+    @Test
+    void proxyForwardsPostBody() throws Exception {
+        String body = "proxied echo body";
+        var response = client.send(
+                proxyRequest("/echo")
+                        .header("content-type", "text/plain")
+                        .POST(HttpRequest.BodyPublishers.ofString(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertEquals(body, response.body());
+        assertEquals("text/plain", response.headers().firstValue("content-type").orElse(""));
+    }
+
+    @Test
+    void proxyForwardsQueryStringAndStatus() throws Exception {
+        var response = client.send(
+                proxyRequest("/status?code=201").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(201, response.statusCode());
+        assertEquals("status 201", response.body());
+    }
+
+    @Test
+    void proxyForwardsCustomHeadersAndRewritesHost() throws Exception {
+        var response = client.send(
+                proxyRequest("/headers")
+                        .header("x-custom-header", "proxied-value")
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertTrue(response.body().contains("x-custom-header: proxied-value"),
+                "upstream should receive forwarded custom header, got: " + response.body());
+        assertTrue(response.body().contains("Host: 127.0.0.1:" + port),
+                "proxy should rewrite Host to the upstream target, got: " + response.body());
+        assertFalse(response.body().contains("Host: localhost:" + proxyPort),
+                "proxy must not forward the client Host header, got: " + response.body());
+    }
+
+    @Test
+    void proxyForwardsChunkedResponse() throws Exception {
+        var response = client.send(
+                proxyRequest("/chunked").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertEquals("chunk1chunk2chunk3", response.body());
+    }
+
+    @Test
+    void proxyForwards404() throws Exception {
+        var response = client.send(
+                proxyRequest("/nonexistent.txt").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(404, response.statusCode());
+    }
+
+    @Test
+    void proxyStripsSecureCookieFlagOnPlainHttp() throws Exception {
+        var response = client.send(
+                proxyRequest("/cookie").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        assertEquals("ok", response.body());
+        String setCookie = response.headers().firstValue("set-cookie").orElse("");
+        assertTrue(setCookie.contains("session=abc"), "should forward cookie, got: " + setCookie);
+        assertFalse(setCookie.toLowerCase().contains("secure"),
+                "Secure flag should be stripped on plain HTTP, got: " + setCookie);
+        assertTrue(setCookie.toLowerCase().contains("httponly"),
+                "HttpOnly flag should be preserved, got: " + setCookie);
+    }
+
+    @Test
+    void proxyReturns502WhenUpstreamDown() throws Exception {
+        int closedPort;
+        try (ServerSocket unused = new ServerSocket(0)) {
+            closedPort = unused.getLocalPort();
+        }
+
+        Server deadProxy = new Server();
+        deadProxy.setHandler(new ProxyHandler(URI.create("http://127.0.0.1:" + closedPort), null, 200));
+        deadProxy.start(0);
+        try {
+            int deadPort = deadProxy.getSocket().getLocalPort();
+            var response = client.send(
+                    HttpRequest.newBuilder(URI.create("http://localhost:" + deadPort + "/hello"))
+                            .timeout(Duration.ofSeconds(2))
+                            .GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(502, response.statusCode());
+            assertTrue(response.body().contains("FAILED TO PROXY REQUEST TO:"),
+                    "502 body should describe the proxy failure, got: " + response.body());
+        } finally {
+            deadProxy.stop();
+        }
+    }
+
+    @Test
+    void proxyWebSocketEchoText() throws Exception {
+        var received = new CopyOnWriteArrayList<String>();
+        var latch = new CountDownLatch(1);
+
+        WebSocket ws = wsBuilder("/ws").buildAsync(proxyWsUri("/ws"), new WebSocket.Listener() {
+            final StringBuilder sb = new StringBuilder();
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                sb.append(data);
+                if (last) {
+                    received.add(sb.toString());
+                    sb.setLength(0);
+                    latch.countDown();
+                }
+                webSocket.request(1);
+                return null;
+            }
+        }).join();
+
+        ws.sendText("hello-via-proxy", true);
+        assertTrue(latch.await(2, TimeUnit.SECONDS), "timed out waiting for proxied echo");
+        assertEquals(1, received.size());
+        assertEquals("echo: hello-via-proxy", received.get(0));
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }

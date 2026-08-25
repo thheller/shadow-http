@@ -185,7 +185,6 @@ public class ProxyHandler implements HttpHandler {
                         // skip malformed content-length
                         continue;
                     }
-                    request.setResponseHeader(header.name, header.value);
                     continue;
                 }
 

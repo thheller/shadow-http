@@ -56,6 +56,12 @@
       <version>${jmh.version}</version>
       <scope>test</scope>
     </dependency>
+
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>1.12.5</version>
+    </dependency>
   </dependencies>
 
   <build>
