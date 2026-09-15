@@ -18,10 +18,16 @@ public class FileHandler implements HttpHandler {
         return Files.isRegularFile(path) && Files.isReadable(path) && !Files.isHidden(path);
     }
 
+    public static boolean supportedRequestType(HttpRequest request) {
+        return switch (request.requestMethod) {
+            case "GET", "POST", "HEAD" -> true;
+            default -> false;
+        };
+    }
+
     @Override
     public void handle(HttpRequest request) throws IOException {
-        // POST should never serve files right?
-        if (!"GET".equals(request.requestMethod) && !"HEAD".equals(request.requestMethod)) {
+        if (!supportedRequestType(request)) {
             return;
         }
 

@@ -57,7 +57,7 @@ public class FileHandlerTest {
     @Test
     void ignoresNonGetMethods() throws IOException {
         String response = TestConnection.run(handler(),
-                "POST /build.clj HTTP/1.1\r\n" +
+                "PUT /build.clj HTTP/1.1\r\n" +
                 "Host: localhost\r\n" +
                 "\r\n");
 

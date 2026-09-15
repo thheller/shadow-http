@@ -67,7 +67,7 @@ public class ClasspathHandlerTest {
     @Test
     void ignoresNonGetMethods() throws IOException {
         String response = TestConnection.run(handler(),
-                "POST /Server.class HTTP/1.1\r\n" +
+                "PUT /Server.class HTTP/1.1\r\n" +
                         "Host: localhost\r\n" +
                         "\r\n");
 

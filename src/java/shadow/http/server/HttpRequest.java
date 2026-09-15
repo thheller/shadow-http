@@ -471,13 +471,13 @@ public class HttpRequest {
             setResponseHeader("last-modified", lastModified);
 
             // HEAD requests get headers but not body
-            if ("GET".equals(requestMethod)) {
+            if ("HEAD".equals(requestMethod)) {
+                skipBody();
+            } else {
                 // using the outputBufferSize since we want to fill that asap, might as well do it all at once
                 try (InputStream in = new BufferedInputStream(Files.newInputStream(file), server.config.outputBufferSize)) {
                     writeStream(in);
                 }
-            } else {
-                skipBody();
             }
         }
     }

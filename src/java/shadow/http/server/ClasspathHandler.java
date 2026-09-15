@@ -51,7 +51,7 @@ public class ClasspathHandler implements HttpHandler {
 
     @Override
     public void handle(HttpRequest request) throws IOException {
-        if (!"GET".equals(request.requestMethod) && !"HEAD".equals(request.requestMethod)) {
+        if (!FileHandler.supportedRequestType(request)) {
             return;
         }
 
@@ -170,12 +170,12 @@ public class ClasspathHandler implements HttpHandler {
             request.setResponseHeader("last-modified", lastModified);
         }
 
-        if ("GET".equals(request.requestMethod)) {
+        if ("HEAD".equals(request.requestMethod)) {
+            request.skipBody();
+        } else {
             try (InputStream in = new BufferedInputStream(conn.getInputStream(), server.config.outputBufferSize)) {
                 request.writeStream(in);
             }
-        } else {
-            request.skipBody();
         }
     }
 
