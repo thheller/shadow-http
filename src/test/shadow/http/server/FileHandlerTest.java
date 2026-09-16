@@ -36,6 +36,17 @@ public class FileHandlerTest {
         assertTrue(response.contains("cache-control: private, no-cache"));
     }
 
+    @Test
+    void servesExistingFileWithEncodedPath() throws IOException {
+        String response = TestConnection.run(handler(),
+                "GET /i%20haz+spaces.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "\r\n");
+
+        assertTrue(response.startsWith("HTTP/1.1 200 "), "expected 200, got: " + response.substring(0, response.indexOf('\n')));
+        assertTrue(response.contains("cache-control: private, no-cache"));
+    }
+
     // -----------------------------------------------------------------------
     // Missing resource → handler does nothing → server returns 404
     // -----------------------------------------------------------------------

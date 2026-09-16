@@ -84,10 +84,10 @@ public class HttpRequest {
 
         int qIdx = requestTarget.indexOf('?');
         if (qIdx >= 0) {
-            this.requestPath = requestTarget.substring(0, qIdx);
+            this.requestPath = decodeComponent(requestTarget.substring(0, qIdx));
             this.requestQueryString = requestTarget.substring(qIdx + 1);
         } else {
-            this.requestPath = requestTarget;
+            this.requestPath = decodeComponent(requestTarget);
             this.requestQueryString = null;
         }
     }
