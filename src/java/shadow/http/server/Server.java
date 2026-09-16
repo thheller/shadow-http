@@ -85,6 +85,7 @@ public class Server {
                     socket.close();
                     throw e;
                 }
+                System.out.println("Port " + (port + i) + " already in use");
                 // socket is still unbound, safe to retry with the same instance
             } catch (IOException e) {
                 socket.close();
