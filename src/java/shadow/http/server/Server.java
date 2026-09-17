@@ -5,6 +5,7 @@ import javax.net.ssl.SSLContext;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -43,9 +44,7 @@ public class Server {
         if (acceptor != null) {
             throw new IllegalStateException("server already listening. create new server instance if you need multiple endpoints.");
         }
-        socket = new ServerSocket();
-        socket.setReuseAddress(true);
-        socket.bind(new InetSocketAddress(host, port));
+        socket = bind(new ServerSocket(), host, port);
 
         Acceptor acc = new Acceptor(this, socket);
         acc.start();
@@ -62,14 +61,39 @@ public class Server {
             throw new IllegalStateException("server already listening. create new server instance if you need multiple endpoints.");
         }
         this.sslContext = ctx;
-        socket = ctx.getServerSocketFactory().createServerSocket();
-        socket.setReuseAddress(true);
-        socket.bind(new InetSocketAddress(host, port));
+        socket = bind(ctx.getServerSocketFactory().createServerSocket(), host, port);
 
         Acceptor acc = new Acceptor(this, socket);
         acc.start();
 
         this.acceptor = acc;
+    }
+
+    private static final int PORT_RETRIES = 10;
+    private static ServerSocket bind(ServerSocket socket, String host, int port) throws IOException {
+        socket.setReuseAddress(true);
+
+        // port 0 lets the OS pick a free port, no point in retrying that
+        int attempts = (port == 0) ? 1 : PORT_RETRIES;
+
+        for (int i = 0; i < attempts; i++) {
+            try {
+                socket.bind(new InetSocketAddress(host, port + i));
+                return socket;
+            } catch (BindException e) {
+                if (i == attempts - 1) {
+                    socket.close();
+                    throw e;
+                }
+                System.out.println("Port " + (port + i) + " already in use");
+                // socket is still unbound, safe to retry with the same instance
+            } catch (IOException e) {
+                socket.close();
+                throw e;
+            }
+        }
+
+        throw new IllegalStateException("Unable to find an available port");
     }
 
     public ServerSocket getSocket() {
