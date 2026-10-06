@@ -189,9 +189,9 @@ public class ProxyHandler implements HttpHandler {
                 }
 
                 if ("set-cookie".equals(header.name) && !request.isSecure()) {
-                    request.setResponseHeader(header.name, stripSecureFlag(header.value));
+                    request.addResponseHeader(header.name, stripSecureFlag(header.value));
                 } else {
-                    request.setResponseHeader(header.name, header.value);
+                    request.addResponseHeader(header.name, header.value);
                 }
             }
 
