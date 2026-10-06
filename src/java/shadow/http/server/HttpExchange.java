@@ -79,14 +79,16 @@ public class HttpExchange implements Exchange {
     private void sendBadRequest(BadRequestException e) throws IOException {
         // just send raw text, maybe don't have a request object
         String body = e.getMessage();
+        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 
-        String response = "HTTP/1.1 400 \r\n" +
+        String headers = "HTTP/1.1 400 \r\n" +
                 "content-type: text/plain\r\n" +
-                "content-length: " + body.length() + "\r\n" +
+                "content-length: " + bodyBytes.length + "\r\n" +
                 "connection: close\r\n" +
-                "\r\n" + body;
+                "\r\n";
 
-        out.write(response.getBytes(StandardCharsets.US_ASCII));
+        out.write(headers.getBytes(StandardCharsets.US_ASCII));
+        out.write(bodyBytes);
         out.flush();
     }
 

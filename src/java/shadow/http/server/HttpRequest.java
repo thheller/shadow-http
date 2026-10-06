@@ -374,12 +374,15 @@ public class HttpRequest {
     public void writeString(String s, boolean isFinal) throws IOException {
         checkComplete();
 
+        // Encode upfront: content-length must be the UTF-8 byte count, not s.length() (char count).
+        // Non-ASCII chars use multiple bytes in UTF-8, so using char count truncates the response.
+        byte[] data = s.getBytes(StandardCharsets.UTF_8);
+
         if (state == State.PENDING) {
             if (isFinal) {
                 // don't compress small responses
-                int length = s.length();
-                if (length < 850 || !autoCompress) {
-                    responseLength = length;
+                if (data.length < 850 || !autoCompress) {
+                    responseLength = data.length;
                     autoCompress = false;
                     autoChunk = false;
                 }
@@ -388,7 +391,7 @@ public class HttpRequest {
         }
 
         // FIXME: actually respect contentChartset
-        responseOut.write(s.getBytes(StandardCharsets.UTF_8));
+        responseOut.write(data);
         responseOut.flush();
 
         if (isFinal) {
