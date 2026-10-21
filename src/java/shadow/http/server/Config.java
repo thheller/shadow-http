@@ -75,8 +75,6 @@ public class Config {
         compressibleTypes.add("application/xml");
         compressibleTypes.add("image/svg+xml");
         compressibleTypes.add("application/wasm");
-        compressibleTypes.add("font/woff");
-        compressibleTypes.add("font/woff2");
     }
 
     public long getMaximumRequestBodySize() {
