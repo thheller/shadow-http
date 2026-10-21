@@ -363,7 +363,7 @@ public class HttpRequest {
     }
 
     public void respondNoContent() throws IOException {
-        responseStatus = 304;
+        responseStatus = 204;
         skipBody();
     }
 
