@@ -232,7 +232,7 @@ public class ProxyHandler implements HttpHandler {
                 }
             } else if (chunked) {
                 // Read chunks manually from sockIn, stream decoded bytes
-                request.writeStream(new ChunkedBodyInputStream(sockIn));
+                request.writeStream(new ChunkedInputStream(sockIn));
             } else {
                 // No content-length, not chunked, connection: close — read until EOF
                 request.writeStream(sockIn);
@@ -385,71 +385,5 @@ public class ProxyHandler implements HttpHandler {
 
     private static String stripSecureFlag(String value) {
         return SECURE_FLAG.matcher(value).replaceAll("$2");
-    }
-
-    /**
-     * InputStream that reads chunked transfer-encoding from an HttpInput,
-     * presenting decoded chunk data as a contiguous stream.
-     */
-    private static class ChunkedBodyInputStream extends InputStream {
-        private static final int MAX_CHUNK_SIZE = 8 * 1024 * 1024;
-
-        private final HttpInput in;
-        private byte[] currentChunk;
-        private int currentOffset;
-        private boolean eof;
-
-        ChunkedBodyInputStream(HttpInput in) {
-            this.in = in;
-        }
-
-        @Override
-        public int read() throws IOException {
-            if (eof) return -1;
-            if (!ensureChunkData()) return -1;
-            return currentChunk[currentOffset++] & 0xFF;
-        }
-
-        @Override
-        public int read(byte[] buf, int off, int len) throws IOException {
-            if (eof) return -1;
-            if (len == 0) return 0;
-            if (!ensureChunkData()) return -1;
-            int available = currentChunk.length - currentOffset;
-            int toCopy = Math.min(len, available);
-            System.arraycopy(currentChunk, currentOffset, buf, off, toCopy);
-            currentOffset += toCopy;
-            return toCopy;
-        }
-
-        @Override
-        public int available() {
-            if (eof || currentChunk == null) return 0;
-            return currentChunk.length - currentOffset;
-        }
-
-        @Override
-        public void close() throws IOException {
-            while (!eof) {
-                if (!ensureChunkData()) break;
-                currentChunk = null;
-                currentOffset = 0;
-            }
-        }
-
-        private boolean ensureChunkData() throws IOException {
-            while (currentChunk == null || currentOffset >= currentChunk.length) {
-                Chunk chunk = in.readChunk(MAX_CHUNK_SIZE);
-                if (chunk.isLast()) {
-                    eof = true;
-                    currentChunk = null;
-                    currentOffset = 0;
-                    return false;
-                }
-                currentChunk = chunk.data();
-                currentOffset = 0;
-            }
-            return true;
-        }
     }
 }
