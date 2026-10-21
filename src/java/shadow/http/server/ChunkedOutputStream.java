@@ -47,9 +47,7 @@ class ChunkedOutputStream extends OutputStream {
     }
 
     private void writeChunk(byte[] buffer, int off, int len) throws IOException {
-        int total = len - off;
-
-        String hex = Integer.toHexString(total);
+        String hex = Integer.toHexString(len);
         out.write(hex.getBytes(StandardCharsets.US_ASCII));
         out.write(CRLF);
         out.write(buffer, off, len);
