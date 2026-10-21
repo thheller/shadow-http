@@ -16,13 +16,13 @@ class InterceptedCloseOutputStream extends OutputStream {
 
     @Override
     public void write(byte[] b) throws IOException {
-        target.write(b);
+        write(b, 0, b.length);
     }
 
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
         target.write(b, off, len);
-        request.responseBytesWritten += b.length;
+        request.responseBytesWritten += len;
     }
 
     @Override
