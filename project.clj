@@ -1,4 +1,4 @@
-(defproject com.thheller/shadow-http "0.1.13"
+(defproject com.thheller/shadow-http "0.1.14"
   :description "HTTP Server for shadow-cljs"
   :url "https://github.com/thheller/shadow-http"
 
