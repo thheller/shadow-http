@@ -75,8 +75,16 @@
 
     ;; write body
     (cond
+      ;; HEAD and 1xx/204/304 never send a body, but keep status and headers (e.g. Content-Length)
+      (or (= "HEAD" (.getRequestMethod request))
+          (HttpRequest/isBodylessStatus status))
+      (do (when (instance? java.io.Closeable body)
+            (.close ^java.io.Closeable body))
+          (.skipBody request))
+
+      ;; empty body, still needs content-length: 0 so keep-alive clients know where it ends
       (nil? body)
-      (.respondNoContent request)
+      (.writeString request "")
 
       (string? body)
       (.writeString request ^String body)

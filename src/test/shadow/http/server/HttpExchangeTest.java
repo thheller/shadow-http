@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 
 // FIXME: theses tests are very brittle since the actual order of response headers doesn't actually matter
@@ -316,6 +318,79 @@ public class HttpExchangeTest {
 
         assertEquals("HTTP/1.1 204 \r\n" +
                 "content-length: 0\r\n" +
+                "\r\n", result);
+    }
+
+    @Test
+    void notModifiedResponse() throws IOException {
+        HttpHandler handler = (request) -> {
+            request.respondNotModified();
+        };
+
+        String result = run(handler,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 304 \r\n" +
+                "\r\n", result);
+    }
+
+    @Test
+    void contentLengthHeaderIsNotChunked() throws IOException {
+        HttpHandler handler = (request) -> {
+            request.setResponseHeader("Content-Length", "5");
+            request.writeStream(new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)));
+        };
+
+        String result = run(handler,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-length: 5\r\n" +
+                "\r\n" +
+                "hello", result);
+    }
+
+    @Test
+    void contentLengthHeaderDroppedWhenCompressed() throws IOException {
+        HttpHandler handler = (request) -> {
+            request.setResponseHeader("Content-Length", "5");
+            request.writeStream(new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)));
+        };
+
+        String result = run(handler,
+                "GET / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "Accept-Encoding: gzip\r\n" +
+                        "\r\n"
+        );
+
+        String head = result.substring(0, result.indexOf("\r\n\r\n"));
+        assertTrue(head.contains("transfer-encoding: chunked"), head);
+        assertTrue(head.contains("content-encoding: gzip"), head);
+        assertFalse(head.toLowerCase().contains("content-length"), head);
+    }
+
+    @Test
+    void contentLengthHeaderKeptWithoutBody() throws IOException {
+        HttpHandler handler = (request) -> {
+            request.setResponseHeader("Content-Length", "12267");
+            request.skipBody();
+        };
+
+        String result = run(handler,
+                "HEAD / HTTP/1.1\r\n" +
+                        "Host: example.com\r\n" +
+                        "\r\n"
+        );
+
+        assertEquals("HTTP/1.1 200 \r\n" +
+                "content-length: 12267\r\n" +
                 "\r\n", result);
     }
 

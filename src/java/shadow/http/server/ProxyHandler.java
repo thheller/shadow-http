@@ -224,7 +224,7 @@ public class ProxyHandler implements HttpHandler {
             }
 
             // Stream the response body
-            if (contentLength == 0 || isBodylessStatus(statusCode)) {
+            if (contentLength == 0 || HttpRequest.isBodylessStatus(statusCode)) {
                 request.skipBody();
             } else if (contentLength > 0) {
                 try (InputStream body = new ContentLengthInputStream(sockIn, contentLength)) {
@@ -374,10 +374,6 @@ public class ProxyHandler implements HttpHandler {
                 }
             }
         }
-    }
-
-    private static boolean isBodylessStatus(int status) {
-        return status == 204 || status == 304 || (status >= 100 && status < 200);
     }
 
     private static final java.util.regex.Pattern SECURE_FLAG =

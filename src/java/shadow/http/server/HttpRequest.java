@@ -342,13 +342,44 @@ public class HttpRequest {
     }
 
     public HttpRequest setResponseHeader(String name, String value) {
-        responseHeaders.put(name, Arrays.asList(value));
+        if (isContentLength(name)) {
+            setResponseContentLength(value);
+        } else {
+            responseHeaders.put(name, Arrays.asList(value));
+        }
         return this;
     }
 
     public HttpRequest addResponseHeader(String name, String value) {
-        responseHeaders.computeIfAbsent(name, s -> new ArrayList<>()).add(value);
+        if (isContentLength(name)) {
+            setResponseContentLength(value);
+        } else {
+            responseHeaders.computeIfAbsent(name, s -> new ArrayList<>()).add(value);
+        }
         return this;
+    }
+
+    // content-length is written by beginResponse, so it is never sent twice or together with chunked
+    static boolean isContentLength(String name) {
+        return name.equalsIgnoreCase("content-length");
+    }
+
+    void setResponseContentLength(String value) {
+        long length;
+        try {
+            length = Long.parseLong(value.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid content-length: " + value);
+        }
+        if (length < 0) {
+            throw new IllegalArgumentException("Negative content-length: " + value);
+        }
+        responseLength = length;
+    }
+
+    // RFC 9110: 1xx, 204 and 304 responses never have a body
+    public static boolean isBodylessStatus(int status) {
+        return status == 204 || status == 304 || (status >= 100 && status < 200);
     }
 
 
@@ -364,6 +395,11 @@ public class HttpRequest {
 
     public void respondNoContent() throws IOException {
         responseStatus = 204;
+        skipBody();
+    }
+
+    public void respondNotModified() throws IOException {
+        responseStatus = 304;
         skipBody();
     }
 
@@ -442,7 +478,7 @@ public class HttpRequest {
 
         final String ifModifiedSince = getRequestHeaderValue("if-modified-since");
         if (lastModified.equals(ifModifiedSince)) {
-            respondNoContent();
+            respondNotModified();
         } else {
             long size = Files.size(file);
 
@@ -504,6 +540,13 @@ public class HttpRequest {
             } else {
                 setResponseHeader("content-encoding", "gzip");
             }
+        }
+
+        // compressed length isn't known upfront, uncompressed length known so no need to chunk
+        if (responseBody && autoCompress) {
+            autoChunk = true;
+        } else if (responseBody && responseLength >= 0) {
+            autoChunk = false;
         }
 
         for (Map.Entry<String, List<String>> header : responseHeaders.entrySet()) {

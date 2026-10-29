@@ -139,7 +139,7 @@ public class ClasspathHandler implements HttpHandler {
         if (lastModified != null) {
             String ifModifiedSince = request.getRequestHeaderValue("if-modified-since");
             if (lastModified.equals(ifModifiedSince)) {
-                request.respondNoContent();
+                request.respondNotModified();
                 return;
             }
         }

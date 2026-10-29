@@ -3,6 +3,7 @@ package shadow.http.server;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -34,6 +35,18 @@ public class FileHandlerTest {
 
         assertTrue(response.startsWith("HTTP/1.1 200 "), "expected 200, got: " + response.substring(0, response.indexOf('\n')));
         assertTrue(response.contains("cache-control: private, no-cache"));
+    }
+
+    @Test
+    void servesUncompressedFileWithContentLength() throws IOException {
+        String response = TestConnection.run(handler(),
+                "GET /build.clj HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n");
+
+        String head = response.substring(0, response.indexOf("\r\n\r\n") + 2);
+        assertTrue(head.contains("content-length: " + Files.size(ROOT.resolve("build.clj")) + "\r\n"), head);
+        assertFalse(head.contains("transfer-encoding"), head);
     }
 
     @Test
