@@ -85,7 +85,7 @@
       (.writeStream request ^InputStream body)
 
       (instance? (Class/forName "[B") body)
-      (with-open [^java.io.OutputStream out (.requestBody request)]
+      (with-open [^java.io.OutputStream out (.responseBody request)]
         (.write out ^bytes body)
         (.flush out))
 
@@ -94,7 +94,7 @@
         (.writeStream request is))
 
       (seq? body)
-      (with-open [^java.io.OutputStream out (.requestBody request)]
+      (with-open [^java.io.OutputStream out (.responseBody request)]
         (doseq [chunk body]
           (when chunk
             (cond
