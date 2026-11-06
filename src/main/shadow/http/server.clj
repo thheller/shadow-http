@@ -3,6 +3,7 @@
     [clojure.core.async :as async]
     [shadow.http.server.ring :as ring])
   (:import
+    [java.io IOException]
     [java.util List]
     [shadow.http.server ClasspathHandler FileHandler HandlerList HttpHandler Server WebSocketConnection WebSocketHandler]))
 
@@ -26,6 +27,17 @@
 (defn file-handler [path]
   (FileHandler/forPath path))
 
+(defn- ws-close! [^WebSocketConnection context]
+  (try
+    (when (.isOpen context)
+      (.sendClose context 1000))
+    (catch IOException e
+      ;; other side went away first, nothing left to close
+      nil)))
+
+;; the websocket closes when ws-out is closed or ws-loop ends, after writing what is still
+;; queued in ws-out. a closed ws-in does too, but that can only be noticed when the next
+;; message arrives
 (deftype CoreAsyncWebSocketHandler [^WebSocketConnection context write-loop ws-in ws-out ws-loop]
   WebSocketHandler
   (start [this new-context]
@@ -45,15 +57,23 @@
                   :else
                   ()
 
-                  ))))]
+                  )))
+            (ws-close! new-context))]
+
+      (when ws-loop
+        (vthread
+          (async/<!! ws-loop)
+          (async/close! ws-out)))
 
       (CoreAsyncWebSocketHandler. new-context write-loop ws-in ws-out ws-loop)))
 
   (onText [this text]
-    (async/>!! ws-in text))
+    (when-not (async/>!! ws-in text)
+      (async/close! ws-out)))
 
   (onBinary [this bin]
-    (async/>!! ws-in bin))
+    (when-not (async/>!! ws-in bin)
+      (async/close! ws-out)))
 
   (onPing [this payload]
     (.sendPong context payload))
