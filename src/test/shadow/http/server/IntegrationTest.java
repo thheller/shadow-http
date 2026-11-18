@@ -146,6 +146,13 @@ public class IntegrationTest {
                         }
                     });
                 }
+                case "/hints" -> {
+                    request.writeStatusLine(103, "Early Hints");
+                    request.writeHeader("link", "</style.css>; rel=preload");
+                    request.writeHeaderEnd();
+                    request.exchange.out.flush();
+                    request.writeString("final");
+                }
                 case "/cookie" -> {
                     request.setResponseHeader("set-cookie", "session=abc; Path=/; Secure; HttpOnly");
                     request.setResponseHeader("content-type", "text/plain");
@@ -834,6 +841,33 @@ public class IntegrationTest {
     }
 
     @Test
+    void proxyForwardsHintsAndFinalResponse() throws Exception {
+        var proxy = new ProxyHandler(URI.create("http://127.0.0.1:" + port));
+        String response = TestConnection.run(proxy, "GET /hints HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertEquals("HTTP/1.1 103 Early Hints\r\nlink: </style.css>; rel=preload\r\n\r\n"
+                + "HTTP/1.1 200 \r\ncontent-length: 5\r\n\r\nfinal", response);
+    }
+
+    @Test
+    void upstreamEofClosesBothSidesOfWebSocketTunnel() throws Exception {
+        var loopback = java.net.InetAddress.getLoopbackAddress();
+        try (var listener = new ServerSocket(0, 1, loopback);
+             var client = new java.net.Socket(loopback, listener.getLocalPort());
+             var downstream = listener.accept();
+             var upstream = new java.net.Socket(loopback, listener.getLocalPort());
+             var peer = listener.accept()) {
+            var connection = new SocketConnection(server, downstream);
+            var tunnel = new ProxyWebSocketExchange(connection, connection.getInputStream(), upstream, upstream.getInputStream());
+            var task = new FutureTask<Void>(() -> { tunnel.process(); return null; });
+            Thread.startVirtualThread(task);
+            peer.shutdownOutput();
+            client.setSoTimeout(2000);
+            assertEquals(-1, client.getInputStream().read());
+            task.get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void proxyForwardsGet() throws Exception {
         var response = client.send(
                 proxyRequest("/hello").GET().build(),
@@ -869,6 +903,18 @@ public class IntegrationTest {
         assertEquals(200, response.statusCode());
         assertEquals(body, response.body());
         assertEquals("text/plain", response.headers().firstValue("content-type").orElse(""));
+    }
+
+    @Test
+    void streamsUnknownLengthUploadWithContinueThroughProxy() throws Exception {
+        byte[] bytes = "development upload".getBytes(StandardCharsets.UTF_8);
+        var upload = proxyRequest("/echo").version(HttpClient.Version.HTTP_1_1)
+                .timeout(Duration.ofSeconds(3)).expectContinue(true)
+                .header("Content-Type", "text/plain")
+                .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))).build();
+        var response = client.send(upload, HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, response.statusCode());
+        assertArrayEquals(bytes, response.body());
     }
 
     @Test
@@ -948,12 +994,13 @@ public class IntegrationTest {
             var response = client.send(
                     HttpRequest.newBuilder(URI.create("http://localhost:" + deadPort + "/hello"))
                             .timeout(Duration.ofSeconds(2))
+                            .header("Cookie", "session=test-cookie")
                             .GET().build(),
                     HttpResponse.BodyHandlers.ofString());
 
             assertEquals(502, response.statusCode());
-            assertTrue(response.body().contains("FAILED TO PROXY REQUEST TO:"),
-                    "502 body should describe the proxy failure, got: " + response.body());
+            assertTrue(response.body().contains("Upstream request to 127.0.0.1 failed"), response.body());
+            assertFalse(response.body().contains("test-cookie"));
         } finally {
             deadProxy.stop();
         }

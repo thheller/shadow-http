@@ -1,7 +1,9 @@
 package shadow.http.server;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
 
 /**
  * An InputStream that reads exactly {@code contentLength} bytes from the
@@ -25,8 +27,7 @@ public class ContentLengthInputStream extends InputStream {
         }
         int b = in.read();
         if (b == -1) {
-            remaining = 0;
-            return -1;
+            throw new EOFException("Incomplete fixed-length body");
         }
         remaining--;
         return b;
@@ -34,14 +35,13 @@ public class ContentLengthInputStream extends InputStream {
 
     @Override
     public int read(byte[] buf, int off, int len) throws IOException {
-        if (remaining <= 0) {
-            return -1;
-        }
+        Objects.checkFromIndexSize(off, len, buf.length);
+        if (len == 0) return 0;
+        if (remaining <= 0) return -1;
         int toRead = (int) Math.min(len, remaining);
         int n = in.read(buf, off, toRead);
         if (n == -1) {
-            remaining = 0;
-            return -1;
+            throw new EOFException("Incomplete fixed-length body");
         }
         remaining -= n;
         return n;

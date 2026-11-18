@@ -1,11 +1,15 @@
 package shadow.http.server;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -188,6 +192,27 @@ public class FileHandlerTest {
         assertTrue(response.startsWith("HTTP/1.1 200 "), "expected 200, got: " + response.substring(0, response.indexOf('\n')));
         assertTrue(response.contains("cache-control: private, no-cache"));
     }
+
+    @Test
+    void fileAndClasspathPrefixesUseResolvedFileLocations(@TempDir Path temp) throws Exception {
+        Path root = Files.createDirectory(temp.resolve("assets"));
+        Files.writeString(root.resolve("inside.txt"), "inside");
+        Files.writeString(temp.resolve("sibling.txt"), "sibling");
+        try {
+            Files.createSymbolicLink(root.resolve("alias.txt"), Path.of("inside.txt"));
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            org.junit.jupiter.api.Assumptions.abort("Symbolic links unavailable: " + e.getMessage());
+        }
+        Files.createSymbolicLink(root.resolve("external.txt"), temp.resolve("sibling.txt"));
+
+        try (var loader = new URLClassLoader(new URL[]{temp.toUri().toURL()}, null)) {
+            for (HttpHandler handler : List.of(FileHandler.forPath(root),
+                    IndexingFileHandler.forPath(root).findFiles(), ClasspathHandler.forPrefix(loader, "/assets"))) {
+                String inside = TestConnection.run(handler, "GET /alias.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
+                String outside = TestConnection.run(handler, "GET /external.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
+                assertTrue(inside.endsWith("\r\n\r\ninside"), inside);
+                assertTrue(outside.startsWith("HTTP/1.1 404 "), outside);
+            }
+        }
+    }
 }
-
-

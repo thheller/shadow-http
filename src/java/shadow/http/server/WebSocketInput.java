@@ -68,6 +68,10 @@ public class WebSocketInput {
      * @throws WebSocketProtocolException on protocol violations
      */
     public WebSocketFrame readFrame() throws IOException {
+        return readFrame(Integer.MAX_VALUE);
+    }
+
+    WebSocketFrame readFrame(int remainingMessageSize) throws IOException {
         // --- Byte 0: FIN, RSV1-3, opcode ---
         int b0 = in.read();
         if (b0 == -1) {
@@ -124,6 +128,9 @@ public class WebSocketInput {
         }
 
         // Section 10.4: enforce implementation limit
+        if (!isControl && payloadLength > remainingMessageSize) {
+            throw new WebSocketProtocolException(1009, "Message exceeds maximum size");
+        }
         if (payloadLength > MAX_PAYLOAD_LENGTH) {
             throw new WebSocketProtocolException(
                     1009, "Frame payload too large: " + payloadLength + " bytes (max " + MAX_PAYLOAD_LENGTH + ")");

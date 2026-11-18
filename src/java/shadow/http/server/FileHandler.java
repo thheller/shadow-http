@@ -55,7 +55,14 @@ public class FileHandler implements HttpHandler {
             return;
         }
 
-        request.serveFile(file);
+        serveContainedFile(request, root, file);
+    }
+
+    static void serveContainedFile(HttpRequest request, Path root, Path file) throws IOException {
+        Path realFile = file.toRealPath();
+        if (realFile.startsWith(root.toRealPath())) {
+            request.serveFile(realFile, file.getFileName().toString());
+        }
     }
 
 

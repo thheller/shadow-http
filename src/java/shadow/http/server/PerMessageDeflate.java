@@ -114,6 +114,10 @@ public class PerMessageDeflate implements AutoCloseable {
      * @return decompressed payload bytes
      */
     public byte[] decompress(byte[] input) throws IOException {
+        return decompress(input, Integer.MAX_VALUE);
+    }
+
+    byte[] decompress(byte[] input, int maxSize) throws IOException {
         if (clientNoContextTakeover) {
             inflater.reset();
         }
@@ -125,12 +129,15 @@ public class PerMessageDeflate implements AutoCloseable {
 
         inflater.setInput(withTail);
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream(input.length * 2);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(Math.min(maxSize, BUFFER_SIZE));
         byte[] buf = new byte[BUFFER_SIZE];
 
         try {
             int n;
             while ((n = inflater.inflate(buf)) > 0) {
+                if (n > maxSize - baos.size()) {
+                    throw new WebSocketProtocolException(1009, "Inflated message exceeds maximum size");
+                }
                 baos.write(buf, 0, n);
             }
         } catch (DataFormatException e) {

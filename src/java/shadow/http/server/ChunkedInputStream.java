@@ -2,6 +2,7 @@ package shadow.http.server;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
 
 /**
  * An InputStream backed by chunked Transfer-Encoding.
@@ -11,11 +12,13 @@ import java.io.InputStream;
  */
 public class ChunkedInputStream extends InputStream {
 
-    private static final int DEFAULT_MAX_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
+    static final int DEFAULT_MAX_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
 
     private final HttpInput in;
     private final int maxChunkSize;
 
+    private long remaining;
+    private boolean failed;
     private byte[] currentChunk;
     private int currentOffset;
     private boolean eof;
@@ -25,6 +28,11 @@ public class ChunkedInputStream extends InputStream {
     }
 
     public ChunkedInputStream(HttpInput in, int maxChunkSize) {
+        this(in, maxChunkSize, Long.MAX_VALUE);
+    }
+
+    ChunkedInputStream(HttpInput in, int maxChunkSize, long maximumLength) {
+        this.remaining = maximumLength;
         this.in = in;
         this.maxChunkSize = maxChunkSize;
         this.currentChunk = null;
@@ -45,13 +53,11 @@ public class ChunkedInputStream extends InputStream {
 
     @Override
     public int read(byte[] buf, int off, int len) throws IOException {
-        if (eof) {
-            return -1;
-        }
+        Objects.checkFromIndexSize(off, len, buf.length);
         if (len == 0) {
             return 0;
         }
-        if (!ensureChunkData()) {
+        if (eof || !ensureChunkData()) {
             return -1;
         }
         int available = currentChunk.length - currentOffset;
@@ -89,7 +95,15 @@ public class ChunkedInputStream extends InputStream {
      */
     private boolean ensureChunkData() throws IOException {
         while (currentChunk == null || currentOffset >= currentChunk.length) {
-            Chunk chunk = in.readChunk(maxChunkSize);
+            if (failed) throw new BadRequestException("Invalid chunked body");
+            Chunk chunk;
+            try {
+                chunk = in.readChunk((int) Math.min(maxChunkSize, remaining));
+            } catch (IOException e) {
+                failed = true;
+                throw e;
+            }
+            remaining -= chunk.data().length;
             if (chunk.isLast()) {
                 eof = true;
                 currentChunk = null;

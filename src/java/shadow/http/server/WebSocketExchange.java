@@ -2,6 +2,7 @@ package shadow.http.server;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class WebSocketExchange implements WebSocketConnection, Exchange {
@@ -12,6 +13,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
     private final Connection connection;
 
     private WebSocketHandler handler;
+    private final int maxMessageSize;
 
     private final ReentrantLock writeLock = new ReentrantLock();
 
@@ -30,6 +32,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     public WebSocketExchange(Connection connection, InputStream in, WebSocketHandler handler, PerMessageDeflate perMessageDeflate) throws IOException {
         this.connection = connection;
+        this.maxMessageSize = connection.getServer().getConfig().getMaximumWebSocketMessageSize();
         this.in = in;
         this.handler = handler;
         this.out = connection.getOutputStream();
@@ -49,18 +52,15 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             ByteArrayOutputStream fragmentBuffer = null;
 
             for (; ; ) {
-                WebSocketFrame frame = null;
-
-                try {
-                    frame = wsIn.readFrame();
-                } catch (WebSocketProtocolException e) {
-                    sendClose(e.getStatusCode());
-                }
-
+                int assembledSize = fragmentBuffer == null ? 0 : fragmentBuffer.size();
+                WebSocketFrame frame = wsIn.readFrame(maxMessageSize - assembledSize);
                 if (frame == null) {
                     break;
                 }
 
+                if (inFragmentedMessage && !frame.isControl() && !frame.isContinuation()) {
+                    throw new WebSocketProtocolException(1002, "Expected continuation frame");
+                }
                 if (frame.isControl()) {
                     // RFC 6455 Section 5.5: control frames may appear in the middle of a fragmented message
                     if (frame.isClose()) {
@@ -77,7 +77,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
                     byte[] payload = frame.payload;
                     if (perMessageDeflate != null && frame.rsv1) {
                         // Per-message compressed – decompress the payload (RFC 7692 Section 6.2)
-                        payload = perMessageDeflate.decompress(frame.payload);
+                        payload = perMessageDeflate.decompress(frame.payload, maxMessageSize);
                     }
                     dispatchMessage(frame.opcode, payload);
                 } else if (!frame.isContinuation() && !frame.isFin()) {
@@ -98,7 +98,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
                         // Last fragment – assemble and optionally decompress
                         byte[] assembled = fragmentBuffer.toByteArray();
                         if (fragmentedCompressed) {
-                            assembled = perMessageDeflate.decompress(assembled);
+                            assembled = perMessageDeflate.decompress(assembled, maxMessageSize);
                         }
                         int opcode = fragmentedOpcode;
                         inFragmentedMessage = false;
@@ -114,6 +114,13 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
                 }
             }
 
+        } catch (WebSocketProtocolException e) {
+            closeReason = e.getMessage();
+            try {
+                sendClose(e.getStatusCode());
+            } catch (IOException ignored) {
+                // The peer may already have closed the transport.
+            }
         } catch (EOFException e) {
             // ignore
         } catch (IOException e) {
@@ -168,6 +175,8 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     private void sendInternal(int opcode, byte[] bytes, int offset, int length) throws IOException {
 
+        Objects.checkFromIndexSize(offset, length, bytes.length);
+
         // Only compress when compression was negotiated AND the payload is large enough
         // to benefit.  RFC 7692 Section 6.1 explicitly allows skipping compression for
         // any individual message (RSV1=0); small messages typically expand under deflate.
@@ -181,22 +190,14 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             offset = 0;
         }
 
-        if (length <= MAX_FRAME_SIZE) {
-            sendFrame(out, true, rsv1, opcode, bytes, 0, length);
-            return;
-        }
-
-        // Send first frame with OPCODE_TEXT and fin=false
-        sendFrame(out, false, rsv1, opcode, bytes, offset, MAX_FRAME_SIZE);
-        offset += MAX_FRAME_SIZE;
-
-        // Send continuation frames (RSV1 MUST NOT be set on non-first fragments per RFC 7692 Section 6.1)
-        while (offset < length) {
-            int end = Math.min(offset + MAX_FRAME_SIZE, length);
-            boolean fin = (end == length);
-            sendFrame(out, fin, false, WebSocketFrame.OPCODE_CONTINUATION, bytes, offset, end - offset);
-            offset = end;
-        }
+        do {
+            int size = Math.min(length, MAX_FRAME_SIZE);
+            sendFrame(out, size == length, rsv1, opcode, bytes, offset, size);
+            offset += size;
+            length -= size;
+            opcode = WebSocketFrame.OPCODE_CONTINUATION;
+            rsv1 = false;
+        } while (length > 0);
     }
 
     public static void sendFrame(OutputStream out, boolean fin, boolean rsv1, int opcode, byte[] payload, int offset, int length) throws IOException {

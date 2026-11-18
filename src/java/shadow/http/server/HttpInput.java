@@ -411,6 +411,9 @@ public class HttpInput extends InputStream {
                 if (header == null) {
                     break;
                 }
+                if (trailers.size() >= HttpExchange.MAX_HEADERS) {
+                    throw new BadRequestException("Too many trailer fields");
+                }
                 trailers.add(header);
             }
             return new Chunk(new byte[0], extensions, trailers);

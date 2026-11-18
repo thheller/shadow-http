@@ -606,5 +606,40 @@ public class WebSocketExchangeTest {
         assertEquals(1002, receivedCode[0]);
         assertNotNull(receivedReason[0]);
     }
-}
+    @Test
+    void sendsOnlyRequestedSliceIncludingAcrossFrameBoundary() throws IOException {
+        byte[] data = new byte[1_000_008];
+        new java.util.Random(42).nextBytes(data);
+        for (int length : new int[]{0, 4, 1_000_001}) {
+            var output = new ByteArrayOutputStream();
+            var connection = new TestConnection(new Server(), "", output);
+            new WebSocketExchange(connection, connection.in, new WebSocketHandler.Base(), null)
+                    .sendBinary(data, 7, length);
+            var frames = parseServerFrames(output.toByteArray());
+            var message = new ByteArrayOutputStream();
+            for (WebSocketFrame frame : frames) message.write(frame.payload);
+            assertTrue(frames.getLast().isFin());
+            assertArrayEquals(Arrays.copyOfRange(data, 7, 7 + length), message.toByteArray());
+        }
+    }
 
+    @Test
+    void enforcesMessageLimitAcrossFragmentsAndInflation() throws IOException {
+        Config config = new Config();
+        config.setMaximumWebSocketMessageSize(32);
+        for (boolean compressed : new boolean[]{false, true}) {
+            var client = new ByteArrayOutputStream();
+            var output = new ByteArrayOutputStream();
+            var deflate = compressed ? new PerMessageDeflate(true, true) : null;
+            if (compressed) {
+                writeClientCompressedTextFrame(client, deflate, "a".repeat(33));
+            } else {
+                writeClientFrame(client, false, WebSocketFrame.OPCODE_BINARY, new byte[16]);
+                writeClientFrame(client, true, WebSocketFrame.OPCODE_CONTINUATION, new byte[17]);
+            }
+            var connection = new TestConnection(new Server(config), new ByteArrayInputStream(client.toByteArray()), output);
+            new WebSocketExchange(connection, connection.in, new WebSocketHandler.Base(), deflate).process();
+            assertEquals(1009, parseServerFrames(output.toByteArray()).getFirst().getCloseStatusCode());
+        }
+    }
+}

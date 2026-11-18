@@ -21,6 +21,7 @@ public class Config {
     int outputBufferSize = 65536; //  32768;
 
     long maximumRequestBodySize = 10_000_000;
+    private int maximumWebSocketMessageSize = 16 * 1024 * 1024;
     boolean useIndexFiles = true;
 
     public Config() {
@@ -82,7 +83,17 @@ public class Config {
     }
 
     public void setMaximumRequestBodySize(long maximumRequestBodySize) {
+        if (maximumRequestBodySize < 0) throw new IllegalArgumentException("Negative request body limit");
         this.maximumRequestBodySize = maximumRequestBodySize;
+    }
+
+    public int getMaximumWebSocketMessageSize() {
+        return maximumWebSocketMessageSize;
+    }
+
+    public void setMaximumWebSocketMessageSize(int bytes) {
+        if (bytes < 0) throw new IllegalArgumentException("Negative WebSocket message limit");
+        maximumWebSocketMessageSize = bytes;
     }
 
     public int getInputBufferSize() {

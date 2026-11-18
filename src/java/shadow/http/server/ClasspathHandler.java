@@ -10,6 +10,7 @@ import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -57,7 +58,8 @@ public class ClasspathHandler implements HttpHandler {
 
         String uri = request.getRequestPath();
 
-        if (!uri.startsWith("/")) {
+        if (!uri.startsWith("/") || uri.indexOf('\\') >= 0 || uri.indexOf('\0') >= 0
+                || Arrays.asList(uri.split("/")).contains("..")) {
             return;
         }
 
@@ -71,6 +73,7 @@ public class ClasspathHandler implements HttpHandler {
 
         boolean useIndexFiles = request.getConfig().useIndexFiles;
 
+        String filename = uri.substring(uri.lastIndexOf('/') + 1);
         URLConnection conn = url.openConnection();
 
         if (conn instanceof JarURLConnection jarc) {
@@ -99,6 +102,7 @@ public class ClasspathHandler implements HttpHandler {
                     return;
                 }
 
+                filename = "index.html";
                 url = index;
                 conn = index.openConnection();
             }
@@ -120,6 +124,7 @@ public class ClasspathHandler implements HttpHandler {
                         return;
                     }
 
+                    filename = "index.html";
                     url = index;
                     conn = index.openConnection();
                 }
@@ -147,9 +152,6 @@ public class ClasspathHandler implements HttpHandler {
         final Server server = request.exchange.connection.getServer();
         final long contentLength = conn.getContentLengthLong();
 
-        // Derive filename for MIME type lookup
-        final String resourcePath = url.getPath();
-        final String filename = resourcePath.substring(resourcePath.lastIndexOf('/') + 1);
         final String mimeType = server.config.guessMimeType(filename);
 
         boolean compress = contentLength >= 850 && server.config.isCompressible(mimeType);
@@ -187,10 +189,27 @@ public class ClasspathHandler implements HttpHandler {
      * Looks up a classpath resource, stripping the leading '/' as required by
      * {@link ClassLoader#getResource(String)}.
      */
-    private URL findResource(String path) {
+    private URL findResource(String path) throws IOException {
         // ClassLoader.getResource does not accept a leading '/'
         String stripped = path.startsWith("/") ? path.substring(1) : path;
-        return classLoader.getResource(stripped);
+        URL url = classLoader.getResource(stripped);
+        if (url == null || !"file".equals(url.getProtocol())) return url;
+
+        // A class loader can have several directory entries containing this prefix.
+        try {
+            Path file = Paths.get(url.toURI()).toRealPath();
+            String rootName = prefix.isEmpty() ? "" : prefix.substring(1) + "/";
+            var roots = classLoader.getResources(rootName);
+            while (roots.hasMoreElements()) {
+                URL root = roots.nextElement();
+                if ("file".equals(root.getProtocol()) && file.startsWith(Paths.get(root.toURI()).toRealPath())) {
+                    return file.toUri().toURL();
+                }
+            }
+            return null;
+        } catch (URISyntaxException e) {
+            throw new IOException("Invalid classpath file URL", e);
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -107,7 +107,7 @@ public class IndexingFileHandler implements HttpHandler, AutoCloseable {
             return;
         }
 
-        request.serveFile(fileInfo.path);
+        FileHandler.serveContainedFile(request, root, fileInfo.path);
     }
 
     public void close() throws Exception {

@@ -11,7 +11,7 @@ public class HttpExchange implements Exchange {
 
     // FIXME: do not go too high, this is already possibly almost 2mb of request header data
     // not sure anything valid will ever send that
-    private static final int MAX_HEADERS = 200;
+    static final int MAX_HEADERS = 200;
 
     final Connection connection;
     final HttpInput in;
@@ -44,18 +44,33 @@ public class HttpExchange implements Exchange {
                 break;
             }
 
-            connection.getServer().handle(request);
-
-            if (!request.isCommitted()) {
-                request.setResponseStatus(404)
-                        .setResponseHeader("content-type", "text/plain")
-                        .writeString("Not found.");
+            String expectation = request.getRequestHeaderValue("expect");
+            if (expectation != null && "HTTP/1.1".equals(request.requestVersion)) {
+                if (!"100-continue".equalsIgnoreCase(expectation)) {
+                    request.setCloseAfter(true).setResponseStatus(417).writeString("Unsupported expectation");
+                    break;
+                }
+                if (request.requestBodyMode == HttpRequest.BodyMode.CHUNKED || request.requestBodyLength > 0) {
+                    out.write("HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                    out.flush();
+                }
             }
 
-            if (request.requestHasBody()) {
-                // FIXME: point is to entirely drain the request body
-                // or should it be an error if the handler didn't do that?
-                request.requestBody().close();
+            try {
+                connection.getServer().handle(request);
+                if (!request.isCommitted()) {
+                    request.setResponseStatus(404)
+                            .setResponseHeader("content-type", "text/plain")
+                            .writeString("Not found.");
+                }
+                if (request.requestHasBody() && !request.closeAfter) {
+                    request.requestBody().close();
+                }
+            } catch (BadRequestException e) {
+                if (!request.isCommitted()) {
+                    sendBadRequest(e);
+                }
+                break;
             }
 
             if (request.state != HttpRequest.State.COMPLETE) {
@@ -88,7 +103,9 @@ public class HttpExchange implements Exchange {
                 "\r\n";
 
         out.write(headers.getBytes(StandardCharsets.US_ASCII));
-        out.write(bodyBytes);
+        if (request == null || !"HEAD".equals(request.requestMethod)) {
+            out.write(bodyBytes);
+        }
         out.flush();
     }
 

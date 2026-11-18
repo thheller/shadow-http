@@ -9,6 +9,7 @@ import java.security.NoSuchAlgorithmException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 
 // FIXME: theses tests are very brittle since the actual order of response headers doesn't actually matter
@@ -317,7 +318,6 @@ public class HttpExchangeTest {
         );
 
         assertEquals("HTTP/1.1 204 \r\n" +
-                "content-length: 0\r\n" +
                 "\r\n", result);
     }
 
@@ -507,4 +507,63 @@ public class HttpExchangeTest {
     }
 
 
+
+    @Test
+    void headFallbackAndBodylessStatusPreserveNextResponse() throws IOException {
+        String response = run(r -> {
+            if (r.requestPath.equals("/empty")) {
+                try (var body = r.setResponseStatus(204).responseBody()) {
+                    body.write(42);
+                }
+            }
+        }, "HEAD /missing HTTP/1.1\r\nHost: localhost\r\n\r\nGET /empty HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertEquals("HTTP/1.1 404 \r\ncontent-type: text/plain\r\ncontent-length: 10\r\n\r\n"
+                + "HTTP/1.1 204 \r\n\r\n", response);
+    }
+
+    @Test
+    void emptyWritesAndRepeatedCloseProduceOneTerminalChunk() throws IOException {
+        String response = run(r -> {
+            try (var body = r.responseBody()) {
+                body.write(new byte[0]);
+                body.write('a');
+                body.close();
+            }
+        }, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(response.endsWith("\r\n\r\n1\r\na\r\n0\r\n\r\n"), response);
+    }
+
+    @Test
+    void truncatedFixedLengthBodyReportsEof() throws IOException {
+        var input = new ContentLengthInputStream(new ByteArrayInputStream(new byte[]{42}), 2);
+        assertEquals(42, input.read());
+        assertThrows(EOFException.class, input::read);
+        assertThrows(EOFException.class, () -> input.read(new byte[2]));
+    }
+
+    @Test
+    void configuredBodyLimitAppliesAcrossChunks() throws IOException {
+        Config config = new Config();
+        config.setMaximumRequestBodySize(3);
+        Server server = new Server(config);
+        server.setHandler(r -> r.writeString(new String(r.requestBody().readAllBytes(), StandardCharsets.US_ASCII)));
+        String headers = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n";
+        for (String last : new String[]{"1\r\nc", "2\r\ncd"}) {
+            var output = new ByteArrayOutputStream();
+            new HttpExchange(new TestConnection(server, headers + "2\r\nab\r\n" + last + "\r\n0\r\n\r\n", output)).process();
+            String response = output.toString(StandardCharsets.US_ASCII);
+            if (last.startsWith("1")) assertTrue(response.endsWith("\r\n\r\nabc"), response);
+            else assertTrue(response.startsWith("HTTP/1.1 400 "), response);
+        }
+    }
+
+    @Test
+    void rejectsUnsupportedOrConflictingFramingBeforeDispatch() throws IOException {
+        for (String framing : new String[]{"Transfer-Encoding: gzip", "Transfer-Encoding: chunked\r\nContent-Length: 0"}) {
+            String response = run(r -> { throw new AssertionError("unexpected handler call"); },
+                    "POST / HTTP/1.1\r\nHost: localhost\r\n" + framing + "\r\n\r\n");
+            assertTrue(response.startsWith("HTTP/1.1 400 "), response);
+            assertTrue(response.contains("connection: close\r\n"));
+        }
+    }
 }

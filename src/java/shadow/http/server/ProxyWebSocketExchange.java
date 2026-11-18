@@ -43,6 +43,10 @@ public class ProxyWebSocketExchange implements Exchange {
                 } catch (IOException ignored) {
                     // upstream closed or client write failed
                 } finally {
+                    try {
+                        clientIn.close(); // Release the other direction if it is waiting for client data.
+                    } catch (IOException ignored) {
+                    }
                     closeQuietly();
                 }
             });

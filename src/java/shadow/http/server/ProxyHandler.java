@@ -5,8 +5,13 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 public class ProxyHandler implements HttpHandler {
@@ -22,15 +27,6 @@ public class ProxyHandler implements HttpHandler {
             "transfer-encoding",
             "upgrade",
             "host"
-    );
-
-    // Headers to skip when forwarding a WebSocket upgrade request.
-    // Connection, Upgrade, and Sec-WebSocket-* headers must be forwarded.
-    private static final Set<String> WS_SKIP_HEADERS = Set.of(
-            "host",
-            "keep-alive",
-            "proxy-authenticate",
-            "proxy-authorization"
     );
 
     private static final byte[] CRLF = {'\r', '\n'};
@@ -64,24 +60,23 @@ public class ProxyHandler implements HttpHandler {
             port = ssl ? 443 : 80;
         }
 
-        Socket socket;
-        if (ssl) {
-            SSLSocketFactory factory = sslSocketFactory;
-            if (factory == null) {
-                try {
-                    factory = SSLContext.getDefault().getSocketFactory();
-                } catch (Exception e) {
-                    throw new IOException("Failed to obtain default SSLContext", e);
-                }
-            }
-            socket = factory.createSocket();
-        } else {
-            socket = new Socket();
-        }
+        Socket socket = new Socket();
+        try {
+            socket.setTcpNoDelay(true);
+            socket.connect(new InetSocketAddress(host, port), connectTimeout);
+            if (!ssl) return socket;
 
-        socket.setTcpNoDelay(true);
-        socket.connect(new InetSocketAddress(host, port), connectTimeout);
-        return socket;
+            SSLSocketFactory factory = sslSocketFactory != null
+                    ? sslSocketFactory : (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket tls = (SSLSocket) factory.createSocket(socket, host, port, true);
+            var parameters = tls.getSSLParameters();
+            parameters.setEndpointIdentificationAlgorithm("HTTPS");
+            tls.setSSLParameters(parameters);
+            return tls;
+        } catch (IOException | RuntimeException e) {
+            socket.close();
+            throw e;
+        }
     }
 
     // Build target URI by appending the request target to the configured base.
@@ -106,273 +101,160 @@ public class ProxyHandler implements HttpHandler {
 
     @Override
     public void handle(HttpRequest request) throws IOException {
-        if (isWebSocketUpgrade(request)) {
-            handleWebSocketProxy(request);
-            return;
-        }
-
-        var uri = resolveTarget(request.requestTarget);
-
-        try (Socket socket = openSocket()) {
-            OutputStream sockOut = new BufferedOutputStream(socket.getOutputStream(), 8192);
-            HttpInput sockIn = new HttpInput(socket.getInputStream(), 8192);
-
-            // Write request line: METHOD /path HTTP/1.1\r\n
-            sockOut.write(request.requestMethod.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(' ');
-
-            // Use the full URI path (+ query) as the request-target
-            String requestTarget = uri.getRawPath();
-            if (uri.getRawQuery() != null) {
-                requestTarget = requestTarget + "?" + uri.getRawQuery();
-            }
-            if (requestTarget == null || requestTarget.isEmpty()) {
-                requestTarget = "/";
-            }
-            sockOut.write(requestTarget.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(' ');
-            sockOut.write("HTTP/1.1".getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(CRLF);
-
-            // Write Host header
-            String host = uri.getHost();
-            int port = uri.getPort();
-            String hostHeader = (port != -1 && port != 80 && port != 443)
-                    ? host + ":" + port
-                    : host;
-            sockOut.write("Host".getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(COLON_SP);
-            sockOut.write(hostHeader.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(CRLF);
-
-            // Write Connection: close
-            sockOut.write("Connection: close".getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(CRLF);
-
-            // Forward request headers, skipping hop-by-hop
-            for (Header h : request.requestHeadersInOrder) {
-                if (!HOP_BY_HOP.contains(h.name)) {
-                    sockOut.write(h.nameIn.getBytes(StandardCharsets.ISO_8859_1));
-                    sockOut.write(COLON_SP);
-                    sockOut.write(h.value.getBytes(StandardCharsets.ISO_8859_1));
-                    sockOut.write(CRLF);
-                }
-            }
-
-            // End headers
-            sockOut.write(CRLF);
-
-            // Forward request body if present
-            if (request.requestHasBody()) {
-                try (InputStream reqBody = request.requestBody()) {
-                    reqBody.transferTo(sockOut);
-                }
-            }
-
-            sockOut.flush();
-
-            // Parse response status line
-            sockIn.readResponseVersion();
-            int statusCode = sockIn.readStatusCode();
-            sockIn.readReasonPhrase();
-
-            request.setResponseStatus(statusCode);
-
-            // Parse and forward response headers
-            long contentLength = -1;
-            boolean chunked = false;
-
-            while (true) {
-                Header header = sockIn.readHeader();
-                if (header == null) {
-                    break;
-                }
-
-                if (HOP_BY_HOP.contains(header.name)) {
-                    // Check for chunked transfer-encoding before skipping
-                    if ("transfer-encoding".equals(header.name)
-                            && header.value.toLowerCase().contains("chunked")) {
-                        chunked = true;
-                    }
-                    continue;
-                }
-
-                if ("content-length".equals(header.name)) {
-                    try {
-                        contentLength = Long.parseLong(header.value.trim());
-                    } catch (NumberFormatException e) {
-                        // skip malformed content-length
-                        continue;
-                    }
-                    continue;
-                }
-
-                if ("set-cookie".equals(header.name) && !request.isSecure()) {
-                    request.addResponseHeader(header.name, stripSecureFlag(header.value));
-                } else {
-                    request.addResponseHeader(header.name, header.value);
-                }
-            }
-
-            // Let the server handle chunking/compression itself
-            request.autoCompress = false;
-            request.autoChunk = true;
-
-            if (contentLength >= 0) {
-                request.responseLength = contentLength;
-                request.autoChunk = false;
-            }
-
-            // Stream the response body
-            if (contentLength == 0 || HttpRequest.isBodylessStatus(statusCode)) {
-                request.skipBody();
-            } else if (contentLength > 0) {
-                try (InputStream body = new ContentLengthInputStream(sockIn, contentLength)) {
-                    request.writeStream(body);
-                }
-            } else if (chunked) {
-                // Read chunks manually from sockIn, stream decoded bytes
-                request.writeStream(new ChunkedInputStream(sockIn));
-            } else {
-                // No content-length, not chunked, connection: close — read until EOF
-                request.writeStream(sockIn);
-            }
-        } catch (Exception e) {
-            if (request.isCommitted()) {
-                // Can't send error response after headers are already committed
-                throw new IOException("Proxy error after response started", e);
-            }
-            request.setResponseStatus(502);
-            request.setResponseHeader("content-type", "text/plain; charset=utf-8");
-            try (HttpOutput out = new HttpOutput(request, 2048)) {
-                out.write("FAILED TO PROXY REQUEST TO: ");
-                out.write(uri.toString());
-                out.write("\n-----\n");
-                out.write(request.toString());
-                out.write("\n-----\n");
-                try (PrintWriter pw = new PrintWriter(out)) {
-                    e.printStackTrace(pw);
-                }
-            }
-        }
-    }
-
-    private static boolean isWebSocketUpgrade(HttpRequest request) {
-        String upgrade = request.getRequestHeaderValue("upgrade");
-        String connection = request.getRequestHeaderValue("connection");
-        return upgrade != null && upgrade.equalsIgnoreCase("websocket")
-                && connection != null && connection.toLowerCase().contains("upgrade");
-    }
-
-    private void handleWebSocketProxy(HttpRequest request) throws IOException {
-        var uri = resolveTarget(request.requestTarget);
-        Socket upstreamSocket = openSocket();
-
+        Set<String> options = connectionOptions(request.requestHeadersInOrder);
+        boolean upgrade = "websocket".equalsIgnoreCase(request.getRequestHeaderValue("upgrade"))
+                && options.contains("upgrade");
+        Socket upstream = null;
         try {
-            OutputStream sockOut = new BufferedOutputStream(upstreamSocket.getOutputStream(), 8192);
-            HttpInput sockIn = new HttpInput(upstreamSocket.getInputStream(), 8192);
+            URI uri = resolveTarget(request.requestTarget);
+            upstream = openSocket();
+            OutputStream out = new BufferedOutputStream(upstream.getOutputStream());
+            HttpInput in = new HttpInput(upstream.getInputStream(), 8192);
+            writeRequestHeaders(request, uri, out, options, upgrade);
 
-            // Write request line
-            sockOut.write(request.requestMethod.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(' ');
-
-            String requestTarget = uri.getRawPath();
-            if (uri.getRawQuery() != null) {
-                requestTarget = requestTarget + "?" + uri.getRawQuery();
-            }
-            if (requestTarget == null || requestTarget.isEmpty()) {
-                requestTarget = "/";
-            }
-            sockOut.write(requestTarget.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(' ');
-            sockOut.write("HTTP/1.1".getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(CRLF);
-
-            // Write Host header for the upstream target
-            String host = uri.getHost();
-            int port = uri.getPort();
-            String hostHeader = (port != -1 && port != 80 && port != 443)
-                    ? host + ":" + port
-                    : host;
-            sockOut.write("Host".getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(COLON_SP);
-            sockOut.write(hostHeader.getBytes(StandardCharsets.US_ASCII));
-            sockOut.write(CRLF);
-
-            // Forward all request headers (including Connection, Upgrade, Sec-WebSocket-*)
-            // except host (already written) and proxy-specific headers
-            for (Header h : request.requestHeadersInOrder) {
-                if (!WS_SKIP_HEADERS.contains(h.name)) {
-                    sockOut.write(h.nameIn.getBytes(StandardCharsets.ISO_8859_1));
-                    sockOut.write(COLON_SP);
-                    sockOut.write(h.value.getBytes(StandardCharsets.ISO_8859_1));
-                    sockOut.write(CRLF);
+            if (request.requestHasBody()) {
+                try {
+                    InputStream body = request.requestBody();
+                    if (request.requestBodyMode == HttpRequest.BodyMode.CHUNKED) {
+                        ChunkedOutputStream chunks = new ChunkedOutputStream(out);
+                        body.transferTo(chunks);
+                        chunks.finish();
+                    } else {
+                        body.transferTo(out);
+                    }
+                } catch (BadRequestException | EOFException e) {
+                    request.setCloseAfter(true).setResponseStatus(400).writeString("Invalid request body");
+                    return;
                 }
             }
+            out.flush();
 
-            sockOut.write(CRLF);
-            sockOut.flush();
-
-            // Read upstream response
-            sockIn.readResponseVersion();
-            int statusCode = sockIn.readStatusCode();
-            sockIn.readReasonPhrase();
-
-            if (statusCode != 101) {
-                // Upstream refused the WebSocket upgrade
-                upstreamSocket.close();
-                request.setResponseStatus(502);
-                request.setResponseHeader("content-type", "text/plain; charset=utf-8");
-                try (HttpOutput out = new HttpOutput(request, 2048)) {
-                    out.write("WebSocket upgrade refused by upstream (status ");
-                    out.write(Integer.toString(statusCode));
-                    out.write("): ");
-                    out.write(uri.toString());
+            for (;;) {
+                in.readResponseVersion();
+                int status = in.readStatusCode();
+                String reason = in.readReasonPhrase();
+                List<Header> headers = new ArrayList<>();
+                Header h;
+                while ((h = in.readHeader()) != null) {
+                    if (headers.size() == HttpExchange.MAX_HEADERS) throw new IOException("Too many upstream headers");
+                    headers.add(h);
                 }
-                return;
-            }
 
-            // Forward 101 response to client
-            request.setResponseStatus(101);
-
-            while (true) {
-                Header header = sockIn.readHeader();
-                if (header == null) {
-                    break;
+                if (status >= 200 || status == 101) {
+                    if (upgrade != (status == 101)) throw new IOException("Unexpected upgrade response");
+                    forwardResponse(request, in, status, headers);
+                    if (upgrade) {
+                        request.exchange.connection.upgrade(
+                                new ProxyWebSocketExchange(request.exchange.connection, request.exchange.in, upstream, in));
+                        request.exchange.upgraded = true;
+                        upstream = null; // The tunnel now owns the socket.
+                    }
+                    return;
                 }
-                request.setResponseHeader(header.name, header.value);
-            }
 
+                // We handle 100-continue locally. Other informational replies precede the final response.
+                if (status != 100 && "HTTP/1.1".equals(request.requestVersion)) {
+                    Set<String> responseOptions = connectionOptions(headers);
+                    request.writeStatusLine(status, reason);
+                    for (Header header : headers) {
+                        if (!skipHeader(header, responseOptions) && !HttpRequest.isContentLength(header.name)) {
+                            request.writeHeader(header.nameIn, header.value);
+                        }
+                    }
+                    request.writeHeaderEnd();
+                    request.exchange.out.flush();
+                }
+            }
+        } catch (IOException e) {
+            if (request.isCommitted()) throw e;
+            request.setCloseAfter(true).setResponseStatus(502)
+                    .setResponseHeader("content-type", "text/plain; charset=utf-8")
+                    .writeString("Upstream request to " + target.getHost() + " failed (" + e.getClass().getSimpleName() + ")");
+        } finally {
+            if (upstream != null) upstream.close();
+        }
+    }
+
+    private static Set<String> connectionOptions(List<Header> headers) {
+        Set<String> options = new HashSet<>();
+        for (Header h : headers) {
+            if ("connection".equals(h.name)) {
+                for (String token : h.value.split(",")) {
+                    options.add(token.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return options;
+    }
+
+    private static boolean skipHeader(Header header, Set<String> options) {
+        return HOP_BY_HOP.contains(header.name) || options.contains(header.name);
+    }
+
+    private void writeRequestHeaders(HttpRequest request, URI uri, OutputStream out, Set<String> options, boolean upgrade) throws IOException {
+        String path = uri.getRawPath();
+        if (path == null || path.isEmpty()) path = "/";
+        if (uri.getRawQuery() != null) path += "?" + uri.getRawQuery();
+
+        String host = target.getHost();
+        if (target.getPort() != -1) host += ":" + target.getPort();
+        out.write((request.requestMethod + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+        String connection = upgrade ? "Connection: Upgrade\r\nUpgrade: websocket\r\n" : "Connection: close\r\n";
+        out.write(connection.getBytes(StandardCharsets.US_ASCII));
+        for (Header h : request.requestHeadersInOrder) {
+            if (skipHeader(h, options) || "expect".equals(h.name) || HttpRequest.isContentLength(h.name)) continue;
+            out.write(h.nameIn.getBytes(StandardCharsets.US_ASCII));
+            out.write(COLON_SP);
+            out.write(h.value.getBytes(StandardCharsets.ISO_8859_1));
+            out.write(CRLF);
+        }
+        switch (request.requestBodyMode) {
+            case FIXED_LENGTH -> out.write(("Content-Length: " + request.requestBodyLength + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            case CHUNKED -> out.write("Transfer-Encoding: chunked\r\n".getBytes(StandardCharsets.US_ASCII));
+        }
+        out.write(CRLF);
+    }
+
+    private static void forwardResponse(HttpRequest request, HttpInput in, int status, List<Header> headers) throws IOException {
+        Set<String> options = connectionOptions(headers);
+        long length = -1;
+        boolean chunked = false;
+        for (Header h : headers) {
+            if (HttpRequest.isContentLength(h.name)) {
+                long value = HttpRequest.parseContentLength(h.value);
+                if (length >= 0 && length != value) throw new IOException("Conflicting upstream content lengths");
+                length = value;
+            } else if ("transfer-encoding".equals(h.name)) {
+                if (chunked || !"chunked".equalsIgnoreCase(h.value)) throw new IOException("Unsupported upstream transfer coding");
+                chunked = true;
+            }
+        }
+        if (chunked && length >= 0) throw new IOException("Conflicting upstream response framing");
+
+        request.setResponseStatus(status);
+        for (Header h : headers) {
+            if (skipHeader(h, options) || HttpRequest.isContentLength(h.name)) continue;
+            String value = "set-cookie".equals(h.name) && !request.isSecure() ? stripSecureFlag(h.value) : h.value;
+            request.addResponseHeader(h.name, value);
+        }
+        request.autoCompress = false;
+        request.autoChunk = length < 0;
+        request.responseLength = length;
+        if (status == 101) {
+            request.setResponseHeader("connection", "Upgrade");
+            for (Header header : headers) {
+                if ("upgrade".equals(header.name)) request.setResponseHeader("upgrade", header.value);
+            }
+        }
+        if ("HEAD".equals(request.requestMethod) || HttpRequest.isBodylessStatus(status) || length == 0) {
             request.skipBody();
-
-            // Switch to raw bidirectional byte forwarding.
-            // Use exchange.in (not connection.getInputStream()) because it may have buffered data.
-            // Use sockIn for the same reason on the upstream side.
-            request.exchange.connection.upgrade(
-                    new ProxyWebSocketExchange(request.exchange.connection, request.exchange.in, upstreamSocket, sockIn)
-            );
-            request.exchange.upgraded = true;
-
-        } catch (Exception e) {
-            if (!upstreamSocket.isClosed()) {
-                upstreamSocket.close();
-            }
-
-            if (request.isCommitted()) {
-                throw new IOException("Proxy WebSocket error after response started", e);
-            }
-            request.setResponseStatus(502);
-            request.setResponseHeader("content-type", "text/plain; charset=utf-8");
-            try (HttpOutput out = new HttpOutput(request, 2048)) {
-                out.write("FAILED TO PROXY WEBSOCKET REQUEST TO: ");
-                out.write(uri.toString());
-                out.write("\n-----\n");
-                out.write(request.toString());
-                out.write("\n-----\n");
-                try (PrintWriter pw = new PrintWriter(out)) {
-                    e.printStackTrace(pw);
-                }
-            }
+        } else if (chunked) {
+            request.writeStream(new ChunkedInputStream(in));
+        } else if (length > 0) {
+            request.writeStream(new ContentLengthInputStream(in, length));
+        } else {
+            request.writeStream(in);
         }
     }
 

@@ -315,7 +315,8 @@ public class HttpRequest {
                 requestBody = new ContentLengthInputStream(exchange.in, requestBodyLength);
             }
             case CHUNKED -> {
-                requestBody = new ChunkedInputStream(exchange.in);
+                requestBody = new ChunkedInputStream(exchange.in, ChunkedInputStream.DEFAULT_MAX_CHUNK_SIZE,
+                        getConfig().getMaximumRequestBodySize());
             }
         }
 
@@ -345,7 +346,7 @@ public class HttpRequest {
         if (isContentLength(name)) {
             setResponseContentLength(value);
         } else {
-            responseHeaders.put(name, Arrays.asList(value));
+            responseHeaders.put(name, new ArrayList<>(Collections.singletonList(value)));
         }
         return this;
     }
@@ -446,7 +447,9 @@ public class HttpRequest {
             beginResponse();
         }
 
-        in.transferTo(responseOut);
+        if (responseBody) {
+            in.transferTo(responseOut);
+        }
         responseOut.flush();
 
         if (isFinal) {
@@ -472,6 +475,10 @@ public class HttpRequest {
      * @throws IOException
      */
     public void serveFile(Path file) throws IOException {
+        serveFile(file, file.getFileName().toString());
+    }
+
+    void serveFile(Path file, String filename) throws IOException {
         final Server server = exchange.connection.getServer();
         final FileTime lastModifiedTime = Files.getLastModifiedTime(file);
         final String lastModified = DATE_FORMATTER.format(lastModifiedTime.toInstant().atZone(GMT));
@@ -485,7 +492,7 @@ public class HttpRequest {
             // FIXME: maybe support range requests?
 
             // FIXME: don't do this per request. cache in FileInfo
-            String mimeType = server.config.guessMimeType(file.getFileName().toString());
+            String mimeType = server.config.guessMimeType(filename);
 
             // FIXME: config option
             boolean compress = size >= 850 && server.config.isCompressible(mimeType);
@@ -526,8 +533,14 @@ public class HttpRequest {
             throw new IllegalStateException("response already committed");
         }
 
-        responseOut = exchange.out;
-
+        boolean head = "HEAD".equals(requestMethod);
+        boolean bodylessStatus = isBodylessStatus(responseStatus);
+        if (!responseBody && !head && !bodylessStatus) {
+            responseLength = 0;
+        }
+        if (head || bodylessStatus) {
+            responseBody = false;
+        }
         writeStatusLine(responseStatus, responseStatusText);
 
         if (responseBody && autoCompress) {
@@ -559,7 +572,7 @@ public class HttpRequest {
 
         if (responseBody && autoChunk) {
             writeHeader("transfer-encoding", "chunked");
-        } else if (responseLength >= 0) {
+        } else if (responseLength >= 0 && responseStatus >= 200 && responseStatus != 204) {
             writeHeader("content-length", Long.toString(responseLength));
         }
 
@@ -576,10 +589,13 @@ public class HttpRequest {
         writeHeaderEnd();
 
         if (!responseBody) {
-            responseOut.flush();
-            responseOut = null;
-            responseBytesWritten = 0;
-            state = State.COMPLETE;
+            exchange.out.flush();
+            responseOut = new OutputStream() {
+                @Override public void write(int b) {}
+                @Override public void write(byte[] b, int off, int len) {}
+                @Override public void close() { state = State.COMPLETE; }
+            };
+            state = State.BODY;
             return;
         }
 
@@ -587,7 +603,7 @@ public class HttpRequest {
 
         // handler code should not be in control of closing underlying out stream since we manage keep-alive handling
         // but closing is still useful to know if the response was actually properly finished
-        responseOut = new InterceptedCloseOutputStream(this, responseOut);
+        responseOut = new InterceptedCloseOutputStream(this, exchange.out);
 
         if (autoChunk) {
             responseOut = new ChunkedOutputStream(responseOut);
@@ -605,22 +621,15 @@ public class HttpRequest {
      */
     void prepare() throws BadRequestException {
         String transferEncoding = getRequestHeaderValue("transfer-encoding");
-        if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
-            requestBodyMode = BodyMode.CHUNKED;
-        }
-
-        // chunked wins. FIXME: spec says sending both is violation
         String contentLengthHeader = getRequestHeaderValue("content-length");
-        if (requestBodyMode != BodyMode.CHUNKED && contentLengthHeader != null) {
-            long contentLength;
-            try {
-                contentLength = Long.parseLong(contentLengthHeader.trim());
-            } catch (NumberFormatException e) {
-                throw new BadRequestException("Invalid Content-Length header: " + contentLengthHeader);
+        if (transferEncoding != null) {
+            if (contentLengthHeader != null || !"HTTP/1.1".equals(requestVersion)
+                    || !"chunked".equalsIgnoreCase(transferEncoding)) {
+                throw new BadRequestException("Unsupported or conflicting request framing");
             }
-            if (contentLength < 0) {
-                throw new BadRequestException("Negative Content-Length: " + contentLength);
-            }
+            requestBodyMode = BodyMode.CHUNKED;
+        } else if (contentLengthHeader != null) {
+            long contentLength = parseContentLength(contentLengthHeader);
 
             if (contentLength > exchange.connection.getServer().getConfig().maximumRequestBodySize) {
                 throw new BadRequestException("Request Content-Length exceeds maximum acceptable size: " + contentLength) ;
@@ -632,6 +641,17 @@ public class HttpRequest {
     }
 
 
+    static long parseContentLength(String value) throws BadRequestException {
+        if (value.isEmpty() || !value.chars().allMatch(c -> c >= '0' && c <= '9')) {
+            throw new BadRequestException("Invalid Content-Length");
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new BadRequestException("Invalid Content-Length", e);
+        }
+    }
+
     void checkComplete() {
         if (state == State.COMPLETE) {
             throw new IllegalStateException("HttpRequest already completed");
@@ -640,29 +660,29 @@ public class HttpRequest {
 
     void writeStatusLine(int statusCode, String reasonPhrase) throws IOException {
         // FIXME: what about http/1.0? what happens if we answer 1.1 to a 1.0 request? does anything actually use 1.0?
-        responseOut.write(HTTP11_START);
+        exchange.out.write(HTTP11_START);
 
         // status-code = 3DIGIT
-        responseOut.write('0' + (statusCode / 100));
-        responseOut.write('0' + (statusCode / 10) % 10);
-        responseOut.write('0' + statusCode % 10);
-        responseOut.write(' ');
+        exchange.out.write('0' + (statusCode / 100));
+        exchange.out.write('0' + (statusCode / 10) % 10);
+        exchange.out.write('0' + statusCode % 10);
+        exchange.out.write(' ');
 
         if (reasonPhrase != null && !reasonPhrase.isEmpty()) {
-            responseOut.write(reasonPhrase.getBytes(StandardCharsets.US_ASCII));
+            exchange.out.write(reasonPhrase.getBytes(StandardCharsets.US_ASCII));
         }
 
-        responseOut.write(CRLF);
+        exchange.out.write(CRLF);
     }
 
     void writeHeader(String name, String value) throws IOException {
-        responseOut.write(name.getBytes(StandardCharsets.US_ASCII));
-        responseOut.write(COLON_SP);
-        responseOut.write(value.getBytes(StandardCharsets.US_ASCII));
-        responseOut.write(CRLF);
+        exchange.out.write(name.getBytes(StandardCharsets.US_ASCII));
+        exchange.out.write(COLON_SP);
+        exchange.out.write(value.getBytes(StandardCharsets.US_ASCII));
+        exchange.out.write(CRLF);
     }
 
     void writeHeaderEnd() throws IOException {
-        responseOut.write(CRLF);
+        exchange.out.write(CRLF);
     }
 }
