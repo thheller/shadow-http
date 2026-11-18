@@ -10,39 +10,18 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Tests for {@link WebSocketExchange}.
- *
- * <p>Client-side frames MUST be masked (RFC 6455 Section 5.1).  We reuse the
- * server-side {@link WebSocketExchange#sendFrame} helper to build the wire
- * bytes and then XOR-mask them before feeding them into the fake connection's
- * input stream.
- *
- * <p>The test infrastructure writes all client frames into a
- * {@link ByteArrayOutputStream}, wraps that as a {@link ByteArrayInputStream},
- * and lets {@link WebSocketExchange#process()} run synchronously.  The server
- * frames written by the exchange are captured in a separate
- * {@link ByteArrayOutputStream} and decoded with {@link WebSocketInput}.
- */
+/** Exercises the exchange using masked client frames and captures the server's wire output. */
 public class WebSocketExchangeTest {
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
-    /**
-     * Builds a single masked client frame using the same
-     * {@link WebSocketExchange#sendFrame} wire format, then applies a
-     * fixed masking key so that {@link WebSocketInput} can unmask it.
-     *
-     * <p>The masking key bytes are prepended right before the payload as
-     * required by Section 5.2.  We construct the unmasked server frame
-     * first (in a temporary stream), then patch the MASK bit and insert
-     * the key + XOR-masked payload.
-     */
     static void writeClientFrame(OutputStream out, boolean fin, int opcode, byte[] payload) throws IOException {
-        // Use a zero masking key for simplicity – still satisfies the framing
-        // requirement while keeping expected values easy to reason about.
+        writeClientFrame(out, fin, false, opcode, payload);
+    }
+
+    static void writeClientFrame(OutputStream out, boolean fin, boolean rsv1, int opcode, byte[] payload) throws IOException {
         byte[] maskingKey = {0x11, 0x22, 0x33, 0x44};
 
         byte[] masked = Arrays.copyOf(payload, payload.length);
@@ -50,11 +29,9 @@ public class WebSocketExchangeTest {
             masked[i] = (byte) (masked[i] ^ maskingKey[i & 0x3]);
         }
 
-        // Byte 0: FIN + opcode (no RSV bits for client frames in these tests)
-        int b0 = (fin ? 0x80 : 0) | (opcode & 0x0F);
+        int b0 = (fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | (opcode & 0x0F);
         out.write(b0);
 
-        // Byte 1: MASK=1 + 7-bit payload length
         int len = masked.length;
         if (len <= 125) {
             out.write(0x80 | len);
@@ -64,15 +41,10 @@ public class WebSocketExchangeTest {
             out.write(len & 0xFF);
         } else {
             out.write(0x80 | 127);
-            for (int i = 7; i >= 0; i--) {
-                out.write((len >> (8 * i)) & 0xFF);
-            }
+            new DataOutputStream(out).writeLong(len);
         }
 
-        // Masking key
         out.write(maskingKey);
-
-        // Masked payload
         out.write(masked);
     }
 
@@ -108,22 +80,6 @@ public class WebSocketExchangeTest {
      */
     static byte[] run(WebSocketHandler handler, byte[] clientFrames) throws IOException {
         return run(handler, clientFrames, null);
-    }
-
-    /**
-     * Decodes all WebSocket frames from a raw byte array using
-     * {@link WebSocketInput}.  Server frames are unmasked, so no masking
-     * key is involved here.
-     */
-    static List<WebSocketFrame> decodeServerFrames(byte[] bytes) throws IOException {
-        WebSocketInput wsIn = new WebSocketInput(new ByteArrayInputStream(bytes));
-        List<WebSocketFrame> frames = new ArrayList<>();
-        WebSocketFrame frame;
-        // WebSocketInput expects masked frames (client→server); for the server
-        // output (unmasked) we use a subclass that skips the mask check –
-        // instead we parse manually to avoid that constraint.
-        // Actually, we'll parse manually below since WebSocketInput enforces masking.
-        return frames; // replaced by manual parsing below
     }
 
     /**
@@ -279,7 +235,8 @@ public class WebSocketExchangeTest {
             }
         };
 
-        byte[] data = {0x01, 0x02, 0x03, (byte) 0xFF};
+        byte[] data = new byte[65_536];
+        new java.util.Random(42).nextBytes(data);
 
         ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
         writeClientBinaryFrame(clientFrames, data);
@@ -382,38 +339,6 @@ public class WebSocketExchangeTest {
     }
 
     /**
-     * Writes a masked client frame with optional RSV1 bit (for compressed frames).
-     */
-    static void writeClientFrame(OutputStream out, boolean fin, boolean rsv1, int opcode, byte[] payload) throws IOException {
-        byte[] maskingKey = {0x11, 0x22, 0x33, 0x44};
-
-        byte[] masked = Arrays.copyOf(payload, payload.length);
-        for (int i = 0; i < masked.length; i++) {
-            masked[i] = (byte) (masked[i] ^ maskingKey[i & 0x3]);
-        }
-
-        int b0 = (fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | (opcode & 0x0F);
-        out.write(b0);
-
-        int len = masked.length;
-        if (len <= 125) {
-            out.write(0x80 | len);
-        } else if (len <= 0xFFFF) {
-            out.write(0x80 | 126);
-            out.write((len >> 8) & 0xFF);
-            out.write(len & 0xFF);
-        } else {
-            out.write(0x80 | 127);
-            for (int i = 7; i >= 0; i--) {
-                out.write((len >> (8 * i)) & 0xFF);
-            }
-        }
-
-        out.write(maskingKey);
-        out.write(masked);
-    }
-
-    /**
      * Writes a masked, compressed client text frame (RSV1=1).
      */
     static void writeClientCompressedTextFrame(OutputStream out, PerMessageDeflate compression, String text) throws IOException {
@@ -475,75 +400,59 @@ public class WebSocketExchangeTest {
         assertEquals(msg2, new String(d2.decompress(c2), StandardCharsets.UTF_8));
     }
 
-    /**
-     * Integration test: send multiple text messages exceeding COMPRESSION_MIN_SIZE
-     * through a WebSocketExchange with compression enabled.  The server echoes
-     * each message back.  We verify the server frames have RSV1=1 (compressed)
-     * and that the payloads decompress to the original text.
-     */
+    private static String upgradeRequest(String extensions) {
+        return "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+                + "Sec-WebSocket-Extensions: " + extensions + "\r\n\r\n";
+    }
+
     @Test
-    void compressedEchoMultipleMessages() throws IOException {
-        // Both sides share parameters; the server compresses outbound, the client
-        // (simulated by the test) compresses inbound frames.
-        try (PerMessageDeflate serverCompression = new PerMessageDeflate(false, false)) {
-
-            // Separate instance for the "client" side (compressing frames we send,
-            // decompressing frames the server sends back).
-            try (PerMessageDeflate clientCompression = new PerMessageDeflate(false, false)) {
-
-                // These messages must exceed COMPRESSION_MIN_SIZE (256 bytes).
-                String msg1 = "Hello WebSocket! ".repeat(20);  // 340 chars
-                String msg2 = "Second message!! ".repeat(20);   // 340 chars
-
-                assertTrue(msg1.getBytes(StandardCharsets.UTF_8).length >= 256,
-                        "msg1 must exceed COMPRESSION_MIN_SIZE");
-                assertTrue(msg2.getBytes(StandardCharsets.UTF_8).length >= 256,
-                        "msg2 must exceed COMPRESSION_MIN_SIZE");
-
-                WebSocketHandler handler = new WebSocketHandler.Base() {
-                    @Override
-                    public void onText(String text) throws IOException {
-                        context.sendText(text);
-                    }
-                };
-
-                ByteArrayOutputStream clientFrames = new ByteArrayOutputStream();
-                writeClientCompressedTextFrame(clientFrames, clientCompression, msg1);
-                writeClientCompressedTextFrame(clientFrames, clientCompression, msg2);
-                writeClientCloseFrame(clientFrames, 1000);
-
-                byte[] serverOutput = run(handler, clientFrames.toByteArray(), serverCompression);
-                List<WebSocketFrame> frames = parseServerFrames(serverOutput);
-
-                // Expect: compressed text frame 1, compressed text frame 2, close frame
-                assertTrue(frames.size() >= 3,
-                        "Expected 2 text frames + close, got " + frames.size());
-
-                // Frame 1: compressed echo of msg1
-                WebSocketFrame f1 = frames.get(0);
-                assertEquals(WebSocketFrame.OPCODE_TEXT, f1.opcode);
-                assertTrue(f1.rsv1, "First echo frame should have RSV1 set (compressed)");
-                assertTrue(f1.fin);
-                // Decompress server's response — need a fresh decompressor matching the
-                // server's compressor context.
-                PerMessageDeflate responseDecompressor = new PerMessageDeflate(false, false);
-                String echo1 = new String(responseDecompressor.decompress(f1.payload), StandardCharsets.UTF_8);
-                assertEquals(msg1, echo1);
-
-                // Frame 2: compressed echo of msg2
-                WebSocketFrame f2 = frames.get(1);
-                assertEquals(WebSocketFrame.OPCODE_TEXT, f2.opcode);
-                assertTrue(f2.rsv1, "Second echo frame should have RSV1 set (compressed)");
-                assertTrue(f2.fin);
-                String echo2 = new String(responseDecompressor.decompress(f2.payload), StandardCharsets.UTF_8);
-                assertEquals(msg2, echo2);
-
-                // Last frame: close
-                WebSocketFrame closeFrame = frames.get(frames.size() - 1);
-                assertEquals(WebSocketFrame.OPCODE_CLOSE, closeFrame.opcode);
-
+    void negotiatedCompressionEchoesMultipleMessages() throws IOException {
+        Server server = new Server();
+        server.setHandler(request -> request.upgradeToWebSocket(new WebSocketHandler.Base() {
+            @Override
+            public void onText(String text) throws IOException {
+                context.sendText(text);
             }
+        }));
+
+        String extension = "permessage-deflate; server_no_context_takeover";
+        List<String> messages = List.of("Hello WebSocket! ".repeat(20), "Second message!! ".repeat(20));
+        try (var client = new PerMessageDeflate(false, true)) {
+            var input = new ByteArrayOutputStream();
+            input.write(upgradeRequest(extension).getBytes(StandardCharsets.US_ASCII));
+            for (String message : messages) writeClientCompressedTextFrame(input, client, message);
+            writeClientCloseFrame(input, 1000);
+
+            var output = new ByteArrayOutputStream();
+            var connection = new TestConnection(server, new ByteArrayInputStream(input.toByteArray()), output);
+            new HttpExchange(connection).process();
+            String headers = output.toString(StandardCharsets.US_ASCII);
+            assertTrue(headers.startsWith("HTTP/1.1 101 "), headers);
+            assertTrue(headers.contains("\r\nsec-websocket-extensions: " + extension + "\r\n"), headers);
+
+            output.reset();
+            assertNotNull(connection.upgraded);
+            connection.upgraded.process();
+            var frames = parseServerFrames(output.toByteArray());
+            assertEquals(messages.size() + 1, frames.size());
+            for (int i = 0; i < messages.size(); i++) {
+                var frame = frames.get(i);
+                assertEquals(WebSocketFrame.OPCODE_TEXT, frame.opcode);
+                assertTrue(frame.rsv1);
+                assertTrue(frame.fin);
+                assertEquals(messages.get(i), new String(client.decompress(frame.payload), StandardCharsets.UTF_8));
+            }
+            assertEquals(WebSocketFrame.OPCODE_CLOSE, frames.getLast().opcode);
         }
+    }
+
+    @Test
+    void unsupportedCompressionOfferStillUpgradesWithoutExtension() throws IOException {
+        String response = TestConnection.run(r -> r.upgradeToWebSocket(new WebSocketHandler.Base()),
+                upgradeRequest("permessage-deflate; server_max_window_bits=10"));
+        assertTrue(response.startsWith("HTTP/1.1 101 "), response);
+        assertFalse(response.contains("sec-websocket-extensions:"), response);
     }
 
     /**

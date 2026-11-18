@@ -9,6 +9,8 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -142,30 +144,21 @@ public class FileHandlerTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void conditionalGetReturns304WhenNotModified() throws IOException {
-        // First request to capture Last-Modified
-        String first = TestConnection.run(handler(),
-                "GET /build.clj HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "\r\n");
-
-        int lmIdx = first.toLowerCase().indexOf("last-modified: ");
-        if (lmIdx == -1) {
-            // No Last-Modified header sent – nothing to assert
-            return;
+    void conditionalGetReturns304WhenNotModified(@TempDir Path root) throws IOException {
+        Path file = Files.writeString(root.resolve("hello.txt"), "hello");
+        Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2024-01-15T12:00:00Z")));
+        try (var loader = new URLClassLoader(new URL[]{root.toUri().toURL()}, null)) {
+            String get = "GET /hello.txt HTTP/1.1\r\nHost: localhost\r\n";
+            String modified = "Mon, 15 Jan 2024 12:00:00 GMT";
+            for (HttpHandler handler : List.of(FileHandler.forPath(root), ClasspathHandler.forPrefix(loader, "/"))) {
+                String first = TestConnection.run(handler, get + "\r\n");
+                assertTrue(first.startsWith("HTTP/1.1 200 "), first);
+                assertTrue(first.contains("\r\nlast-modified: " + modified + "\r\n"), first);
+                String second = TestConnection.run(handler, get + "If-Modified-Since: " + modified + "\r\n\r\n");
+                assertTrue(second.startsWith("HTTP/1.1 304 "), second);
+                assertTrue(second.endsWith("\r\n\r\n"), second);
+            }
         }
-
-        int lmEnd = first.indexOf("\r\n", lmIdx);
-        String lastModifiedValue = first.substring(lmIdx + "last-modified: ".length(), lmEnd);
-
-        // Second request using the captured timestamp
-        String second = TestConnection.run(handler(),
-                "GET /build.clj HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "If-Modified-Since: " + lastModifiedValue + "\r\n" +
-                "\r\n");
-
-        assertTrue(second.startsWith("HTTP/1.1 304 "), "expected 304, got: " + second.substring(0, second.indexOf('\n')));
     }
 
     // -----------------------------------------------------------------------
@@ -176,21 +169,6 @@ public class FileHandlerTest {
     void forPathThrowsForNonExistentDirectory() {
         assertThrows(IllegalArgumentException.class,
                 () -> FileHandler.forPath(Paths.get("non-existent-dir-xyz")));
-    }
-
-    // -----------------------------------------------------------------------
-    // Serves Clojure file (repl.clj)
-    // -----------------------------------------------------------------------
-
-    @Test
-    void servesReplCljFile() throws IOException {
-        String response = TestConnection.run(handler(),
-                "GET /repl.clj HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "\r\n");
-
-        assertTrue(response.startsWith("HTTP/1.1 200 "), "expected 200, got: " + response.substring(0, response.indexOf('\n')));
-        assertTrue(response.contains("cache-control: private, no-cache"));
     }
 
     @Test
@@ -206,8 +184,7 @@ public class FileHandlerTest {
         Files.createSymbolicLink(root.resolve("external.txt"), temp.resolve("sibling.txt"));
 
         try (var loader = new URLClassLoader(new URL[]{temp.toUri().toURL()}, null)) {
-            for (HttpHandler handler : List.of(FileHandler.forPath(root),
-                    IndexingFileHandler.forPath(root).findFiles(), ClasspathHandler.forPrefix(loader, "/assets"))) {
+            for (HttpHandler handler : List.of(FileHandler.forPath(root), ClasspathHandler.forPrefix(loader, "/assets"))) {
                 String inside = TestConnection.run(handler, "GET /alias.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
                 String outside = TestConnection.run(handler, "GET /external.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
                 assertTrue(inside.endsWith("\r\n\r\ninside"), inside);

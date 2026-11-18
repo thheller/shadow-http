@@ -2,7 +2,16 @@ package shadow.http.server;
 
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -94,58 +103,22 @@ public class ClasspathHandlerTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void directoryUriDoesNotServeJarDirectoryEntry() throws IOException {
-        // "/" → prefix + "/" + "index.html" → "shadow/http/server/index.html" which doesn't exist
-        String response = TestConnection.run(handler(),
-                "GET / HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "\r\n");
-
-        assertTrue(response.startsWith("HTTP/1.1 404 "), "expected 404, got: " + response.substring(0, response.indexOf('\n')));
-    }
-
-    @Test
-    void trailingSlashUriDoesNotServeJarDirectoryEntry() throws IOException {
-        String response = TestConnection.run(handler(),
-                "GET /subdir/ HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "\r\n");
-
-        assertTrue(response.startsWith("HTTP/1.1 404 "), "expected 404, got: " + response.substring(0, response.indexOf('\n')));
-    }
-
-    // -----------------------------------------------------------------------
-    // Conditional GET (If-Modified-Since)
-    // -----------------------------------------------------------------------
-
-    @Test
-    void conditionalGetReturns304WhenNotModified() throws IOException {
-        // First request – grab the Last-Modified value from the response
-        String first = TestConnection.run(handler(),
-                "GET /Server.class HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "\r\n");
-
-        // Only attempt conditional GET if the server actually sent a last-modified header.
-        // For resources loaded from the filesystem (e.g. during a regular Maven build) the
-        // timestamp is available; for entries inside a jar it may be zero and the header
-        // is omitted – in that case we simply skip the 304 assertion.
-        int lmIdx = first.toLowerCase().indexOf("last-modified: ");
-        if (lmIdx == -1) {
-            // No last-modified sent; nothing to assert
-            return;
+    void jarDirectoryServesOnlyItsIndex(@TempDir Path temp) throws IOException {
+        Path jar = temp.resolve("site.jar");
+        try (var out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry("site/"));
+            out.putNextEntry(new JarEntry("site/empty/"));
+            out.putNextEntry(new JarEntry("site/index.html"));
+            out.write("index from jar".getBytes(StandardCharsets.UTF_8));
         }
-
-        int lmEnd = first.indexOf("\r\n", lmIdx);
-        String lastModifiedValue = first.substring(lmIdx + "last-modified: ".length(), lmEnd);
-
-        String second = TestConnection.run(handler(),
-                "GET /Server.class HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "If-Modified-Since: " + lastModifiedValue + "\r\n" +
-                        "\r\n");
-
-        assertTrue(second.startsWith("HTTP/1.1 304 "), "expected 304, got: " + second.substring(0, second.indexOf('\n')));
+        try (var loader = new URLClassLoader(new URL[]{jar.toUri().toURL()}, null)) {
+            var handler = ClasspathHandler.forPrefix(loader, "/site");
+            String index = TestConnection.run(handler, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            assertTrue(index.startsWith("HTTP/1.1 200 "), index);
+            assertTrue(index.endsWith("\r\n\r\nindex from jar"), index);
+            String empty = TestConnection.run(handler, "GET /empty/ HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            assertTrue(empty.startsWith("HTTP/1.1 404 "), empty);
+        }
     }
 
     // -----------------------------------------------------------------------

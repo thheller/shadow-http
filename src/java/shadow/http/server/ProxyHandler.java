@@ -141,9 +141,9 @@ public class ProxyHandler implements HttpHandler {
                 }
 
                 if (status >= 200 || status == 101) {
-                    if (upgrade != (status == 101)) throw new IOException("Unexpected upgrade response");
+                    if (status == 101 && !upgrade) throw new IOException("Unexpected upgrade response");
                     forwardResponse(request, in, status, headers);
-                    if (upgrade) {
+                    if (status == 101) {
                         request.exchange.connection.upgrade(
                                 new ProxyWebSocketExchange(request.exchange.connection, request.exchange.in, upstream, in));
                         request.exchange.upgraded = true;

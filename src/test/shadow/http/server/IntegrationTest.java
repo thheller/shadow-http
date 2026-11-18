@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,6 +35,8 @@ public class IntegrationTest {
     private static HttpClient client;
     private static int port;
     private static int proxyPort;
+
+    private static final String LARGE_BODY = "some repeated filler text for compression testing\n".repeat(200);
 
     @BeforeAll
     static void startServer() throws Exception {
@@ -80,13 +84,8 @@ public class IntegrationTest {
                     request.writeString(sb.toString());
                 }
                 case "/large" -> {
-                    // generate a response large enough to trigger compression
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < 200; i++) {
-                        sb.append("line ").append(i).append(": some repeated filler text for compression testing\n");
-                    }
                     request.setResponseHeader("content-type", "text/plain");
-                    request.writeString(sb.toString());
+                    request.writeString(LARGE_BODY);
                 }
                 case "/chunked" -> {
                     request.setResponseHeader("content-type", "text/plain");
@@ -492,20 +491,26 @@ public class IntegrationTest {
 
     @Test
     void largeResponseCompressed() throws Exception {
-        var response = client.send(
-                request("/large")
-                        .header("accept-encoding", "gzip")
-                        .GET().build(),
-                HttpResponse.BodyHandlers.ofInputStream());
+        for (String encoding : new String[]{"gzip", "br, GZip;q=0.5", "br, *;q=1"}) {
+            var response = client.send(request("/large").header("Accept-Encoding", encoding).build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            assertEquals(200, response.statusCode());
+            assertEquals("gzip", response.headers().firstValue("content-encoding").orElseThrow(), encoding);
+            try (var body = new GZIPInputStream(response.body())) {
+                assertEquals(LARGE_BODY, new String(body.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        }
+    }
 
-        assertEquals(200, response.statusCode());
-
-        // httpclient doesn't handle compression automatically, need to do manually
-        byte[] body = new GZIPInputStream(response.body()).readAllBytes();
-        String bodyString = new String(body);
-
-        assertTrue(bodyString.contains("line 0:"));
-        assertTrue(bodyString.contains("line 199:"));
+    @Test
+    void largeResponseHonorsGzipRefusal() throws Exception {
+        for (String encoding : new String[]{"gzip;q=0", "*;q=1, GZip;q=0.000", "gzip;q=0.3, identity;q=1", "not-gzip"}) {
+            var response = client.send(request("/large").header("Accept-Encoding", encoding).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertTrue(response.headers().firstValue("content-encoding").isEmpty(), encoding);
+            assertEquals(LARGE_BODY, response.body());
+        }
     }
 
     @Test
@@ -523,14 +528,25 @@ public class IntegrationTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void multipleSequentialRequests() throws Exception {
-        for (int i = 0; i < 5; i++) {
-            var response = client.send(
-                    request("/hello").GET().build(),
-                    HttpResponse.BodyHandlers.ofString());
-
-            assertEquals(200, response.statusCode());
-            assertEquals("hello world", response.body());
+    void servesSequentialRequestsOnOneSocket() throws Exception {
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(3000);
+            var input = new HttpInput(socket.getInputStream(), 8192);
+            for (int code : new int[]{200, 201}) {
+                String get = "GET /status?code=" + code + " HTTP/1.1\r\nHost: localhost\r\n\r\n";
+                socket.getOutputStream().write(get.getBytes(StandardCharsets.US_ASCII));
+                assertEquals("HTTP/1.1", input.readResponseVersion());
+                assertEquals(code, input.readStatusCode());
+                input.readReasonPhrase();
+                String body = "status " + code;
+                String length = null;
+                Header header;
+                while ((header = input.readHeader()) != null) {
+                    if ("content-length".equals(header.name)) length = header.value;
+                }
+                assertEquals(Integer.toString(body.length()), length);
+                assertEquals(body, new String(input.readNBytes(body.length()), StandardCharsets.US_ASCII));
+            }
         }
     }
 
@@ -557,25 +573,15 @@ public class IntegrationTest {
 
     @Test
     void fileHandlerTakesPriorityForMatchingPaths() throws Exception {
-        // /hello.txt exists as a file, so FileHandler should serve it
-        // even though customHandler could also match it
-        var response = client.send(
-                request("/hello.txt").GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-
-        assertEquals(200, response.statusCode());
-        assertEquals("Hello from test file!", response.body());
-    }
-
-    @Test
-    void customHandlerServesWhenFileDoesNotExist() throws Exception {
-        // /hello is not a file, so FileHandler passes, customHandler serves
-        var response = client.send(
-                request("/hello").GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-
-        assertEquals(200, response.statusCode());
-        assertEquals("hello world", response.body());
+        var secondCalled = new AtomicBoolean();
+        HttpHandler competingHandler = request -> {
+            secondCalled.set(true);
+            request.writeString("handled by second");
+        };
+        var handlers = HandlerList.create(FileHandler.forPath("src/test-env"), competingHandler);
+        String response = TestConnection.run(handlers, "GET /hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(response.endsWith("\r\n\r\nHello from test file!"), response);
+        assertFalse(secondCalled.get());
     }
 
     // -----------------------------------------------------------------------
@@ -906,6 +912,14 @@ public class IntegrationTest {
     }
 
     @Test
+    void proxyPreservesExplicitZeroContentLength() throws Exception {
+        var proxy = new ProxyHandler(URI.create("http://127.0.0.1:" + port));
+        String response = TestConnection.run(proxy, "POST /headers HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n");
+        String body = response.substring(response.indexOf("\r\n\r\n") + 4);
+        assertTrue(body.lines().anyMatch(line -> line.equalsIgnoreCase("Content-Length: 0")), response);
+    }
+
+    @Test
     void streamsUnknownLengthUploadWithContinueThroughProxy() throws Exception {
         byte[] bytes = "development upload".getBytes(StandardCharsets.UTF_8);
         var upload = proxyRequest("/echo").version(HttpClient.Version.HTTP_1_1)
@@ -1004,6 +1018,18 @@ public class IntegrationTest {
         } finally {
             deadProxy.stop();
         }
+    }
+
+    @Test
+    void proxyForwardsDeclinedWebSocketUpgradeAsHttp() throws Exception {
+        String upgrade = "GET /status?code=403 HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n"
+                + "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n"
+                + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+        var proxy = new ProxyHandler(URI.create("http://127.0.0.1:" + port));
+        String response = TestConnection.run(proxy, upgrade + "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(response.startsWith("HTTP/1.1 403 "), response);
+        assertTrue(response.contains("\r\n\r\nstatus 403HTTP/1.1 200 "), response);
+        assertTrue(response.endsWith("\r\n\r\nhello world"), response);
     }
 
     @Test

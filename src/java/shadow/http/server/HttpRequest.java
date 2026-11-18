@@ -15,6 +15,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.net.URLDecoder;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 
 public class HttpRequest {
@@ -299,7 +300,7 @@ public class HttpRequest {
      * than zero; Content-Length: 0 explicitly means no content.
      */
     public boolean requestHasBody() {
-        return requestBodyMode != BodyMode.NONE;
+        return requestBodyMode == BodyMode.CHUNKED || requestBodyLength > 0;
     }
 
     public InputStream requestBody() throws IOException {
@@ -528,6 +529,31 @@ public class HttpRequest {
         }
     }
 
+    private static final Pattern ENCODING_WEIGHT = Pattern.compile(
+            "(gzip|identity|\\*)(?:[ \\t]*;[ \\t]*q=(0(?:\\.[0-9]{0,3})?|1(?:\\.0{0,3})?))?",
+            Pattern.CASE_INSENSITIVE);
+
+    private static boolean acceptsGzip(String acceptEncoding) {
+        if (acceptEncoding == null) return false;
+        if ("gzip".equalsIgnoreCase(acceptEncoding)) return true;
+
+        double gzip = -1;
+        double wildcard = 0;
+        double identity = 0;
+        for (String entry : acceptEncoding.split(",")) {
+            var match = ENCODING_WEIGHT.matcher(entry.trim());
+            if (!match.matches()) continue;
+            double weight = match.group(2) == null ? 1 : Double.parseDouble(match.group(2));
+            switch (match.group(1).toLowerCase(Locale.ROOT)) {
+                case "gzip" -> gzip = weight;
+                case "*" -> wildcard = weight;
+                case "identity" -> identity = weight;
+            }
+        }
+        if (gzip < 0) gzip = wildcard;
+        return gzip > 0 && gzip >= identity;
+    }
+
     void beginResponse() throws IOException {
         if (state != State.PENDING) {
             throw new IllegalStateException("response already committed");
@@ -544,13 +570,8 @@ public class HttpRequest {
         writeStatusLine(responseStatus, responseStatusText);
 
         if (responseBody && autoCompress) {
-            String acceptEncoding = getRequestHeaderValue("accept-encoding");
-
-            // FIXME: not sure if worth adding dependencies to get zstd or brotli
-            // only gzip is fine for now
-            if (acceptEncoding == null || !acceptEncoding.contains("gzip")) {
-                autoCompress = false;
-            } else {
+            autoCompress = acceptsGzip(getRequestHeaderValue("accept-encoding"));
+            if (autoCompress) {
                 setResponseHeader("content-encoding", "gzip");
             }
         }

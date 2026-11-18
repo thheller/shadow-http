@@ -396,20 +396,21 @@ public class HttpExchangeTest {
 
     @Test
     void doubleRespondThrows() throws IOException {
-        HttpHandler handler = (request) -> {
+        String response = run(request -> {
             request.writeString("first");
-            try {
-                request.writeString("second");
-            } catch (IllegalStateException e) {
-                assertEquals("HttpRequest already completed", e.getMessage());
-            }
-        };
+            assertThrows(IllegalStateException.class, () -> request.writeString("second"));
+        }, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
 
-        run(handler,
-                "GET / HTTP/1.1\r\n" +
-                        "Host: example.com\r\n" +
-                        "\r\n"
-        );
+        assertEquals("HTTP/1.1 200 \r\ncontent-length: 5\r\n\r\nfirst", response);
+    }
+
+    @Test
+    void requestHasBodyDistinguishesEmptyFromPositiveContentLength() throws IOException {
+        HttpHandler handler = request -> request.writeString(Boolean.toString(request.requestHasBody()));
+        String post = "POST / HTTP/1.1\r\nHost: example.com\r\n";
+        assertTrue(run(handler, post + "\r\n").endsWith("\r\n\r\nfalse"));
+        assertTrue(run(handler, post + "Content-Length: 0\r\n\r\n").endsWith("\r\n\r\nfalse"));
+        assertTrue(run(handler, post + "Content-Length: 1\r\n\r\nx").endsWith("\r\n\r\ntrue"));
     }
 
     @Test

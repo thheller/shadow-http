@@ -50,7 +50,7 @@ public class HttpExchange implements Exchange {
                     request.setCloseAfter(true).setResponseStatus(417).writeString("Unsupported expectation");
                     break;
                 }
-                if (request.requestBodyMode == HttpRequest.BodyMode.CHUNKED || request.requestBodyLength > 0) {
+                if (request.requestHasBody()) {
                     out.write("HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
                     out.flush();
                 }
