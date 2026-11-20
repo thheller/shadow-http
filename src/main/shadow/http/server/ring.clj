@@ -1,54 +1,95 @@
 (ns shadow.http.server.ring
   (:require
+    [clojure.string :as str]
     [shadow.http.server :as-alias srv]
-    [ring.websocket.protocols :as ring-protocols])
+    [ring.core.protocols :as ring-core]
+    ;; extends Listener and PingListener to maps, without it map listeners would only work
+    ;; if user code happened to load it
+    [ring.websocket]
+    [ring.websocket.protocols :as ring-ws])
   (:import
-    [java.io InputStream File]
+    [java.io Closeable File FileInputStream InputStream OutputStream OutputStreamWriter]
+    [java.net InetSocketAddress]
     [java.nio ByteBuffer]
+    [java.nio.charset StandardCharsets]
+    [java.util Locale Map]
     [shadow.http.server
-     HttpHandler HttpRequest
+     Header HttpHandler HttpRequest
      WebSocketConnection WebSocketHandler]))
+
+(defn- request-method [^String method]
+  (case method
+    "GET" :get
+    "POST" :post
+    "PUT" :put
+    "DELETE" :delete
+    "HEAD" :head
+    "OPTIONS" :options
+    "PATCH" :patch
+    ;; with the default locale "OPTIONS" would become :optıons in a turkish locale
+    (keyword (.toLowerCase method Locale/ROOT))))
+
+(defn- request-headers [^HttpRequest request]
+  ;; HttpRequest already lowercased the names and joined repeated headers with ", "
+  (let [^Map headers (.getRequestHeaders request)]
+    (cond-> (into {} headers)
+      ;; ring wants repeated cookie headers joined with "; " instead
+      (and (.hasRepeatedRequestHeaders request) (.containsKey headers "cookie"))
+      (assoc "cookie"
+        (->> (.getRequestHeadersInOrder request)
+             (filter #(= "cookie" (.-name ^Header %)))
+             (map #(.-value ^Header %))
+             (str/join "; "))))))
+
+(defn- remote-addr [^HttpRequest request]
+  ;; ring wants only the IP, toString would be "/127.0.0.1:54321"
+  (let [addr (.getRemoteAddress request)]
+    (if (instance? InetSocketAddress addr)
+      (let [^InetSocketAddress addr addr]
+        (if-some [inet (.getAddress addr)]
+          (.getHostAddress inet)
+          (.getHostString addr)))
+      (str addr))))
+
+(defn- parse-host
+  "splits a Host header value into [server-name server-port]"
+  [^String host default-port]
+  ;; the port follows the last :, unless that : is part of an IPv6 literal like [::1]
+  (let [ci (.lastIndexOf host (int \:))]
+    (if (or (neg? ci) (< ci (.lastIndexOf host (int \]))))
+      [host default-port]
+      [(subs host 0 ci)
+       (or (parse-long (subs host (inc ci))) default-port)])))
 
 (defn build-request-map
   "Builds a Ring request map from an HttpRequest."
   [^HttpRequest request]
   (let [target (.getRequestTarget request)
         qi (.indexOf target (int \?))
+        ;; ring wants the path as sent, not decoded like .getRequestPath.
+        ;; wrap-file and wrap-resource decode it themselves.
         uri (if (neg? qi) target (subs target 0 qi))
         query-string (when (pos? qi) (subs target (inc qi)))
 
-        ;; Ring requires lowercased header names -> values
-        ;; HttpRequest.headers already stores name lowercased -> value
-        headers (.getRequestHeaders request)
+        headers (request-headers request)
 
-        scheme
-        (if (.isSecure request) :https :http)
+        secure? (.isSecure request)
+        default-port (if secure? 443 80)
 
-        default-port
-        (if (.isSecure request) 443 80)
-
-        ;; extract host header for server-name/server-port
-        host (.get headers "host")
         [server-name server-port]
-        (when host
-          (let [ci (.lastIndexOf ^String host (int \:))]
-            (if (neg? ci)
-              [host default-port]
-              [(subs host 0 ci)
-               (try (Integer/parseInt (subs host (inc ci)))
-                    (catch Exception _ default-port))])))
-
-        method (keyword (.toLowerCase (.getRequestMethod request)))]
+        (if-some [host (get headers "host")]
+          (parse-host host default-port)
+          ["localhost" default-port])]
 
     (cond-> ^{::request request}
-      {:request-method method
+      {:request-method (request-method (.getRequestMethod request))
        :uri uri
-       :headers (into {} headers)
+       :headers headers
        :protocol (.getRequestVersion request)
-       :scheme scheme
-       :server-name (or server-name "localhost")
-       :server-port (or server-port default-port)
-       :remote-addr (str (.getRemoteAddress request))}
+       :scheme (if secure? :https :http)
+       :server-name server-name
+       :server-port server-port
+       :remote-addr (remote-addr request)}
 
       query-string
       (assoc :query-string query-string)
@@ -56,6 +97,41 @@
       (.requestHasBody request)
       (assoc :body (.requestBody request))
       )))
+
+;; same as the private ring.core.protocols/response-charset, which ring uses for String and ISeq bodies
+(def ^:private re-charset
+  #"(?x);(?:.*\s)?(?i:charset)=(?:
+      ([!\#$%&'*\-+.0-9A-Z\^_`a-z\|~]+)|  # token
+      \"((?:\\\"|[^\"])*)\"               # quoted
+    )\s*(?:;|$)")
+
+(defn- response-charset ^String [headers]
+  (let [content-type (some (fn [[k v]] (when (.equalsIgnoreCase "content-type" ^String k) v)) headers)]
+    (when (string? content-type)
+      (when-let [m (re-find re-charset content-type)]
+        (or (m 1) (m 2))))))
+
+(defn- string->bytes ^bytes [^String s ^String charset]
+  (if charset
+    (.getBytes s charset)
+    (.getBytes s StandardCharsets/UTF_8)))
+
+(defn- write-seq-body [^HttpRequest request body ^String charset]
+  (let [^OutputStream out (.responseBody request)
+        writer (OutputStreamWriter. out (or charset "UTF-8"))]
+    (doseq [chunk body]
+      ;; ring writes (str chunk), byte arrays are a shadow-http extension
+      (if (bytes? chunk)
+        (do (.flush writer)
+            (.write out ^bytes chunk))
+        (.write writer (str chunk)))
+      ;; ring flushes after every chunk, so lazy seqs can stream
+      (.flush writer))
+    (.close writer)))
+
+(defn- close-body [body]
+  (when (instance? Closeable body)
+    (.close ^Closeable body)))
 
 (defn write-ring-response
   "Writes a Ring response map to the HttpResponse."
@@ -82,102 +158,124 @@
         :else
         (throw (ex-info "invalid header value" {:header k :value v}))))
 
-    ;; write body
+    ;; write body, same output as ring.core.protocols/StreamableResponseBody but using the
+    ;; known length where possible
     (cond
       ;; HEAD and 1xx/204/304 never send a body, but keep status and headers (e.g. Content-Length)
       (or (= "HEAD" (.getRequestMethod request))
           (HttpRequest/isBodylessStatus status))
-      (do (when (instance? java.io.Closeable body)
-            (.close ^java.io.Closeable body))
+      (do (close-body body)
           (.skipBody request))
 
       ;; empty body, still needs content-length: 0 so keep-alive clients know where it ends
       (nil? body)
-      (.writeString request "")
+      (.writeBytes request (byte-array 0))
 
       (string? body)
-      (.writeString request ^String body)
+      (.writeBytes request (string->bytes body (response-charset headers)))
+
+      (bytes? body)
+      (.writeBytes request ^bytes body)
 
       (instance? InputStream body)
-      (.writeStream request ^InputStream body)
-
-      (instance? (Class/forName "[B") body)
-      (with-open [^java.io.OutputStream out (.responseBody request)]
-        (.write out ^bytes body)
-        (.flush out))
+      (with-open [^InputStream in body]
+        (.writeStream request in))
 
       (instance? File body)
-      (with-open [is (java.io.FileInputStream. ^File body)]
-        (.writeStream request is))
+      (with-open [in (FileInputStream. ^File body)]
+        (.writeStream request in))
 
       (seq? body)
-      (with-open [^java.io.OutputStream out (.responseBody request)]
-        (doseq [chunk body]
-          (when chunk
-            (cond
-              (string? chunk)
-              (.write out (.getBytes ^String chunk "UTF-8"))
-              (instance? (Class/forName "[B") chunk)
-              (.write out ^bytes chunk))))
-        (.flush out))
+      (write-seq-body request body (response-charset headers))
 
+      ;; anything else extending StreamableResponseBody
       :else
-      (do (.writeString request (str body))))))
+      (let [out (.responseBody request)]
+        (ring-core/write-body-to-stream body ring-response out)
+        ;; ring's own implementations close it, others might not. closing twice is fine.
+        (.close out)))))
 
-(deftype RingWebSocketHandler [^WebSocketConnection ctx listener]
+(defn- data->bytes
+  "ring allows ByteBuffers and byte arrays for binary messages, ping and pong data"
+  ^bytes [data]
+  (cond
+    (bytes? data)
+    data
+
+    ;; .array would ignore position/limit and fails for direct or read-only buffers.
+    ;; reading from a duplicate leaves the buffer as the caller had it.
+    (instance? ByteBuffer data)
+    (let [buf (.duplicate ^ByteBuffer data)
+          arr (byte-array (.remaining buf))]
+      (.get buf arr)
+      arr)
+
+    :else
+    (throw (IllegalArgumentException. (str "expected a ByteBuffer or byte array, got: " (type data))))))
+
+(deftype RingWebSocketHandler [^WebSocketConnection ctx listener ping-listener?]
   WebSocketHandler
   (start [_ ws-ctx]
-    (let [next (RingWebSocketHandler. ws-ctx listener)
-          next-listener (ring-protocols/on-open listener next)]
-      (if (satisfies? ring-protocols/Listener next-listener)
-        (RingWebSocketHandler. ws-ctx next-listener)
-        next)))
+    (let [socket (RingWebSocketHandler. ws-ctx listener ping-listener?)]
+      ;; ring ignores whatever on-open returns
+      (ring-ws/on-open listener socket)
+      socket))
 
   (onText [this payload]
-    (ring-protocols/on-message listener this payload)
-    this)
+    (ring-ws/on-message listener this payload))
 
   (onBinary [this payload]
-    (ring-protocols/on-message listener this (ByteBuffer/wrap payload))
-    this)
+    (ring-ws/on-message listener this (ByteBuffer/wrap payload)))
 
   (onPing [this payload]
-    (ring-protocols/on-ping listener this (ByteBuffer/wrap payload))
-    this)
+    (if ping-listener?
+      (ring-ws/on-ping listener this (ByteBuffer/wrap payload))
+      ;; PingListener is optional, ring requires the adapter to answer the ping then
+      (.sendPong ctx payload)))
 
   (onPong [this payload]
-    (ring-protocols/on-pong listener this (ByteBuffer/wrap payload))
-    this)
+    (ring-ws/on-pong listener this (ByteBuffer/wrap payload)))
+
+  (onError [this e]
+    (ring-ws/on-error listener this e))
 
   (onClose [this status-code reason]
-    (ring-protocols/on-close listener this status-code reason))
+    (ring-ws/on-close listener this status-code reason))
 
-  ring-protocols/Socket
-  (-open? [this]
+  ring-ws/Socket
+  (-open? [_]
     (.isOpen ctx))
 
-  (-send [this message]
-    (if (string? message)
-      (.sendText ctx message)
-      (throw (ex-info "TBD" {})))
-    this)
+  (-send [_ message]
+    (if (instance? CharSequence message)
+      (.sendText ctx (.toString ^CharSequence message))
+      (.sendBinary ctx (data->bytes message))))
 
-  (-ping [this data]
-    (.sendPing ctx (.array ^ByteBuffer data))
-    this)
-  (-pong [this data]
-    (.sendPong ctx (.array ^ByteBuffer data))
-    this)
+  (-ping [_ data]
+    (.sendPing ctx (data->bytes data)))
 
-  (-close [this code reason]
-    (.sendClose ctx code)
-    this
-    ))
+  (-pong [_ data]
+    (.sendPong ctx (data->bytes data)))
+
+  (-close [_ code reason]
+    (.sendClose ctx (int code) ^String reason))
+
+  ring-ws/AsyncSocket
+  (-send-async [this message succeed fail]
+    ;; writes block, so this sends right away instead of async. keeps the message order and
+    ;; the callback contract: succeed once written, fail with the exception otherwise.
+    (if-some [e (try
+                  (ring-ws/-send this message)
+                  nil
+                  (catch Throwable e
+                    e))]
+      (fail e)
+      (succeed))))
 
 (defn ring-ws-handler
   "Creates a WebSocketHandler from a ring.websocket listener map."
   [listener]
-  (RingWebSocketHandler. nil listener))
+  (RingWebSocketHandler. nil listener (satisfies? ring-ws/PingListener listener)))
 
 (deftype RingHandler [handler-fn]
   HttpHandler

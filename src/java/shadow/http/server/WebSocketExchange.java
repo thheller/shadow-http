@@ -26,7 +26,8 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
      */
     final PerMessageDeflate perMessageDeflate;
 
-    boolean wasClosed = false;
+    // written under writeLock, but isOpen may be called from any thread
+    volatile boolean wasClosed = false;
     int closeStatusCode = 1006; // 1006 = abnormal closure (no close frame received)
     String closeReason = "";
 
@@ -121,12 +122,19 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             } catch (IOException ignored) {
                 // The peer may already have closed the transport.
             }
+            reportError(e);
         } catch (EOFException e) {
             // ignore
         } catch (IOException e) {
-            // ignore
+            reportError(e);
         } catch (Exception e) {
-            e.printStackTrace();
+            // handler code failed, RFC 6455 Section 7.4.1: 1011 = unexpected condition
+            try {
+                sendClose(1011);
+            } catch (IOException ignored) {
+                // The peer may already have closed the transport.
+            }
+            reportError(e);
         } finally {
             if (perMessageDeflate != null) {
                 perMessageDeflate.close();
@@ -134,6 +142,16 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
         }
 
         handler.onClose(closeStatusCode, closeReason);
+    }
+
+    // onClose must still be called if onError throws
+    private void reportError(Throwable e) {
+        try {
+            handler.onError(e);
+        } catch (Exception failed) {
+            failed.addSuppressed(e);
+            failed.printStackTrace();
+        }
     }
 
     private void dispatchMessage(int opcode, byte[] payload) throws IOException {
@@ -254,18 +272,40 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     @Override
     public void sendClose(int statusCode) throws IOException {
+        sendClose(statusCode, null);
+    }
+
+    @Override
+    public void sendClose(int statusCode, String reason) throws IOException {
         writeLock.lock();
         try {
-            sendCloseInternal(statusCode);
+            sendCloseInternal(statusCode, reason);
         } finally {
             writeLock.unlock();
         }
     }
 
-    void sendCloseInternal(int statusCode) throws IOException {
-        byte[] payload = new byte[2];
+    void sendCloseInternal(int statusCode, String reason) throws IOException {
+        // RFC 6455 Section 5.5.1: no more frames after a close frame, which includes another close.
+        // happens when the peer answers a close we sent, or a handler closes more than once
+        if (wasClosed) {
+            return;
+        }
+
+        byte[] reasonBytes = reason == null ? new byte[0] : reason.getBytes(StandardCharsets.UTF_8);
+        // control frame payloads are limited to 125 bytes, 2 of which are the status code
+        int reasonLength = Math.min(reasonBytes.length, 123);
+        if (reasonLength < reasonBytes.length) {
+            // don't cut a multibyte UTF-8 sequence in half, continuation bytes are 10xxxxxx
+            while (reasonLength > 0 && (reasonBytes[reasonLength] & 0xC0) == 0x80) {
+                reasonLength--;
+            }
+        }
+
+        byte[] payload = new byte[2 + reasonLength];
         payload[0] = (byte) ((statusCode >> 8) & 0xFF);
         payload[1] = (byte) (statusCode & 0xFF);
+        System.arraycopy(reasonBytes, 0, payload, 2, reasonLength);
         sendFrame(out, true, false, WebSocketFrame.OPCODE_CLOSE, payload, 0, payload.length);
         wasClosed = true;
         closeStatusCode = statusCode;

@@ -344,6 +344,7 @@ public class HttpRequest {
     }
 
     public HttpRequest setResponseHeader(String name, String value) {
+        validateHeader(name, value);
         if (isContentLength(name)) {
             setResponseContentLength(value);
         } else {
@@ -353,6 +354,7 @@ public class HttpRequest {
     }
 
     public HttpRequest addResponseHeader(String name, String value) {
+        validateHeader(name, value);
         if (isContentLength(name)) {
             setResponseContentLength(value);
         } else {
@@ -364,6 +366,37 @@ public class HttpRequest {
     // content-length is written by beginResponse, so it is never sent twice or together with chunked
     static boolean isContentLength(String name) {
         return name.equalsIgnoreCase("content-length");
+    }
+
+    // header names and values are written as is, so a CR or LF would let them end the header line
+    // and inject other headers or a body (response splitting), e.g. a redirect to a user supplied url
+    static void validateHeader(String name, String value) {
+        if (name == null || value == null) {
+            throw new IllegalArgumentException("Header name and value must not be null: " + name);
+        }
+        if (hasLineBreak(name) || hasLineBreak(value)) {
+            throw new IllegalArgumentException("Header must not contain CR or LF: " + name);
+        }
+    }
+
+    private static boolean hasLineBreak(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\r' || c == '\n') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // header names are stored as given, which for ring handlers is usually not lowercase
+    public boolean hasResponseHeader(String name) {
+        for (String key : responseHeaders.keySet()) {
+            if (key.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void setResponseContentLength(String value) {
@@ -409,26 +442,34 @@ public class HttpRequest {
         writeString(s, true);
     }
 
+    // always UTF-8, use writeBytes for anything else
     public void writeString(String s, boolean isFinal) throws IOException {
-        checkComplete();
-
         // Encode upfront: content-length must be the UTF-8 byte count, not s.length() (char count).
         // Non-ASCII chars use multiple bytes in UTF-8, so using char count truncates the response.
-        byte[] data = s.getBytes(StandardCharsets.UTF_8);
+        writeBytes(s.getBytes(StandardCharsets.UTF_8), isFinal);
+    }
+
+    public void writeBytes(byte[] data) throws IOException {
+        writeBytes(data, true);
+    }
+
+    public void writeBytes(byte[] data, boolean isFinal) throws IOException {
+        checkComplete();
 
         if (state == State.PENDING) {
             if (isFinal) {
+                // the whole body is known, so this length is exact and wins over any content-length
+                // set before. a wrong one would break keep-alive. unused when compressing, which chunks.
+                responseLength = data.length;
+
                 // don't compress small responses
-                if (data.length < 850 || !autoCompress) {
-                    responseLength = data.length;
+                if (data.length < 850) {
                     autoCompress = false;
-                    autoChunk = false;
                 }
             }
             beginResponse();
         }
 
-        // FIXME: actually respect contentChartset
         responseOut.write(data);
         responseOut.flush();
 
@@ -570,7 +611,9 @@ public class HttpRequest {
         writeStatusLine(responseStatus, responseStatusText);
 
         if (responseBody && autoCompress) {
-            autoCompress = acceptsGzip(getRequestHeaderValue("accept-encoding"));
+            // content the handler already encoded (e.g. pre-gzipped) must not be compressed again
+            autoCompress = !hasResponseHeader("content-encoding")
+                    && acceptsGzip(getRequestHeaderValue("accept-encoding"));
             if (autoCompress) {
                 setResponseHeader("content-encoding", "gzip");
             }

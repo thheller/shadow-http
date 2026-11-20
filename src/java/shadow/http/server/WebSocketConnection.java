@@ -33,4 +33,8 @@ public interface WebSocketConnection {
     }
 
     void sendClose(int statusCode) throws IOException;
+
+    default void sendClose(int statusCode, String reason) throws IOException {
+        sendClose(statusCode);
+    }
 }

@@ -18,6 +18,16 @@ public interface WebSocketHandler {
     default void onPong(byte[] payload) throws IOException {
     }
 
+    /**
+     * called when reading fails or a handler method throws, before the connection closes and onClose is called.
+     * IOExceptions are expected when the other side goes away, so only report everything else by default.
+     */
+    default void onError(Throwable e) {
+        if (!(e instanceof IOException)) {
+            e.printStackTrace();
+        }
+    }
+
     default void onClose(int statusCode, String reason) {
     }
 
