@@ -68,10 +68,19 @@
 
     ;; set all other headers
     (doseq [[k v] headers]
-      (if (string? v)
+      (cond
+        (nil? v)
+        nil
+
+        (string? v)
         (.setResponseHeader request k v)
-        ;; ring allows header values to be vectors of strings
-        (throw (ex-info "currently not supporting header vector values" {:header k :value v}))))
+
+        (sequential? v)
+        (doseq [^String s v]
+          (.addResponseHeader request k s))
+
+        :else
+        (throw (ex-info "invalid header value" {:header k :value v}))))
 
     ;; write body
     (cond
