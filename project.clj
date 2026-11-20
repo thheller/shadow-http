@@ -1,4 +1,4 @@
-(defproject com.thheller/shadow-http "0.1.17"
+(defproject com.thheller/shadow-http "0.1.18"
   :description "HTTP Server for shadow-cljs"
   :url "https://github.com/thheller/shadow-http"
 
@@ -11,7 +11,7 @@
               :sign-releases false}}
 
   :dependencies
-  [[org.clojure/clojure "1.12.4" :scope "provided"]]
+  [[org.clojure/clojure "1.12.7" :scope "provided"]]
 
   :source-paths
   ["src/main"]
