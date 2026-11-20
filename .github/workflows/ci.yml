@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches: [ "main", "master" ]
-    paths: [ "src/**", "pom.xml", "deps.edn", "project.clj" ]
+    paths: [ "src/**", "pom.xml", "deps.edn", "project.clj", ".github/workflows/**" ]
   pull_request:
     branches: [ "main", "master" ]
-    paths: [ "src/**", "pom.xml", "deps.edn", "project.clj" ]
+    paths: [ "src/**", "pom.xml", "deps.edn", "project.clj", ".github/workflows/**" ]
 
 jobs:
   test:
@@ -21,7 +21,19 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
+          # the clojure deps also end up in ~/.m2, so deps.edn is part of the cache key
+          cache-dependency-path: |
+            pom.xml
+            deps.edn
 
-      - name: Run tests
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.7.1681
+
+      - name: Run Java tests
         run: mvn --batch-mode test
 
+      # uses the classes mvn compiled into target/classes
+      - name: Run Clojure tests
+        run: clojure -M:test
