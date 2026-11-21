@@ -69,6 +69,8 @@ Endpoints exposed: `GET /health`, `GET /plaintext`, `GET /json`, `POST /echo`, `
 Run command: `./benchmarks/run.sh --warmup 3 --duration 5`
 Environment: `Linux 6.12.113+deb13-arm64`, `10 CPUs`, `OpenJDK 27`, `32 concurrent connections`, `500 SSE events/stream`, `-Xms512m -Xmx512m` per JVM, `0 errors` across all runs.
 
+The numbers vary a little depending on the order these are run in. They also all ran a VM, not on an actual machine. Overall trends are accurate though. Ring overhead very minimal in these and very competitive with the "native" version.
+
 ### `http-plaintext` — HTTP `GET /plaintext` (keep-alive)
 
 | Server | Throughput (req/s) | vs base | p50 | p95 | p99 | Errors |
