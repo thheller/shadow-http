@@ -567,4 +567,92 @@ public class HttpExchangeTest {
             assertTrue(response.contains("connection: close\r\n"));
         }
     }
+
+    @Test
+    void invalidPercentEncodingReturns400() throws IOException {
+        String response = run(r -> r.writeString("ok"),
+                "GET /bad%ZZpath HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(response.startsWith("HTTP/1.1 400 "), response);
+        assertTrue(response.contains("connection: close\r\n"), response);
+    }
+
+    @Test
+    void connectionCloseHeaderIsCaseInsensitiveAndSupportsTokenLists() throws IOException {
+        for (String connHeader : new String[]{"Connection: Close", "Connection: keep-alive, Close"}) {
+            String response = run(r -> r.writeString("ok"),
+                    "GET /1 HTTP/1.1\r\nHost: localhost\r\n" + connHeader + "\r\n\r\n" +
+                    "GET /2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            assertEquals("HTTP/1.1 200 \r\ncontent-length: 2\r\nconnection: close\r\n\r\nok", response);
+        }
+    }
+
+    @Test
+    void http10ClosesByDefaultAndAvoidsChunking() throws IOException {
+        String response = run(r -> {
+            try (var out = r.responseBody()) {
+                out.write("hello".getBytes(StandardCharsets.UTF_8));
+            }
+        }, "GET / HTTP/1.0\r\n\r\nGET /second HTTP/1.0\r\n\r\n");
+
+        assertTrue(response.startsWith("HTTP/1.1 200 \r\n"), response);
+        assertFalse(response.contains("transfer-encoding"), response);
+        assertTrue(response.contains("connection: close\r\n"), response);
+        assertTrue(response.endsWith("\r\n\r\nhello"), response);
+    }
+
+    @Test
+    void setResponseHeaderOverwritesCaseInsensitively() throws IOException {
+        String response = run(r -> {
+            r.setResponseHeader("Content-Type", "text/html");
+            r.setResponseHeader("content-type", "application/json");
+            r.writeString("{}");
+        }, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        assertEquals("HTTP/1.1 200 \r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}", response);
+    }
+
+    @Test
+    void binaryAndSseContentTypesSkipAutoCompression() throws IOException {
+        byte[] payload = "x".repeat(2000).getBytes(StandardCharsets.UTF_8);
+        for (String ct : new String[]{"image/png", "text/event-stream", "application/zip"}) {
+            String response = run(r -> {
+                r.setResponseHeader("Content-Type", ct);
+                r.writeBytes(payload);
+            }, "GET / HTTP/1.1\r\nHost: localhost\r\nAccept-Encoding: gzip\r\n\r\n");
+            String head = response.substring(0, response.indexOf("\r\n\r\n"));
+            assertFalse(head.toLowerCase().contains("content-encoding"), ct + ": " + head);
+            assertTrue(head.contains("content-length: 2000"), ct + ": " + head);
+        }
+
+        String textResp = run(r -> {
+            r.setResponseHeader("Content-Type", "text/plain; charset=utf-8");
+            r.writeBytes(payload);
+        }, "GET / HTTP/1.1\r\nHost: localhost\r\nAccept-Encoding: gzip\r\n\r\n");
+        String textHead = textResp.substring(0, textResp.indexOf("\r\n\r\n"));
+        assertTrue(textHead.contains("content-encoding: gzip"), textHead);
+        assertTrue(textHead.contains("vary: accept-encoding"), textHead);
+    }
+
+    @Test
+    void uncaughtHandlerExceptionReturns500() throws IOException {
+        String response = run(r -> {
+            throw new RuntimeException("boom");
+        }, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        assertTrue(response.startsWith("HTTP/1.1 500 "), response);
+        assertTrue(response.contains("connection: close\r\n"), response);
+        assertTrue(response.contains("boom"), response);
+    }
+
+    @Test
+    void fixedContentLengthMismatchClosesKeepAliveConnection() throws IOException {
+        String response = run(r -> {
+            r.setResponseHeader("Content-Length", "10");
+            try (var out = r.responseBody()) {
+                out.write("short".getBytes(StandardCharsets.UTF_8));
+            }
+        }, "GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        assertEquals("HTTP/1.1 200 \r\ncontent-length: 10\r\n\r\nshort", response);
+    }
 }

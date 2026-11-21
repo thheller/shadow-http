@@ -7,7 +7,7 @@ import java.util.List;
  * construct a handler that tries given handlers in order until one opts to process the request.
  */
 public class HandlerList implements HttpHandler {
-    private HttpHandler[] handlers = null;
+    private volatile HttpHandler[] handlers = null;
 
     public HandlerList(HttpHandler[] handlers) {
         setHandlers(handlers);

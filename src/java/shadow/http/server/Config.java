@@ -2,6 +2,7 @@ package shadow.http.server;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -9,7 +10,7 @@ public class Config {
     final Map<String, String> mimeTypes = new HashMap<>();
     final Set<String> compressibleTypes = new HashSet<>();
 
-    public static Config DEFAULT = new Config();
+    public static final Config DEFAULT = new Config();
 
     // directly affects how much memory each connection uses
     // larger input isn't all that relevant
@@ -101,6 +102,7 @@ public class Config {
     }
 
     public void setInputBufferSize(int inputBufferSize) {
+        if (inputBufferSize <= 0) throw new IllegalArgumentException("Input buffer size must be > 0");
         this.inputBufferSize = inputBufferSize;
     }
 
@@ -109,6 +111,7 @@ public class Config {
     }
 
     public void setOutputBufferSize(int outputBufferSize) {
+        if (outputBufferSize <= 0) throw new IllegalArgumentException("Output buffer size must be > 0");
         this.outputBufferSize = outputBufferSize;
     }
 
@@ -120,17 +123,30 @@ public class Config {
         this.useIndexFiles = useIndexFiles;
     }
 
+    public void addMimeType(String extension, String mimeType) {
+        mimeTypes.put(extension.toLowerCase(Locale.ROOT), mimeType);
+    }
+
+    public void addCompressibleType(String mimeType) {
+        compressibleTypes.add(mimeType.toLowerCase(Locale.ROOT));
+    }
+
     public String guessMimeType(String filename) {
         int lastDot = filename.lastIndexOf('.');
         if (lastDot <= 0 || lastDot == filename.length() - 1) {
             return "application/octet-stream";
         }
 
-        String extension = filename.substring(lastDot + 1).toLowerCase();
+        String extension = filename.substring(lastDot + 1).toLowerCase(Locale.ROOT);
         return mimeTypes.getOrDefault(extension, "application/octet-stream");
     }
 
     public boolean isCompressible(String mimeType) {
-        return compressibleTypes.contains(mimeType);
+        if (mimeType == null) {
+            return false;
+        }
+        int semi = mimeType.indexOf(';');
+        String base = (semi >= 0 ? mimeType.substring(0, semi) : mimeType).trim().toLowerCase(Locale.ROOT);
+        return compressibleTypes.contains(base);
     }
 }

@@ -79,24 +79,21 @@ public class ProxyHandler implements HttpHandler {
         }
     }
 
-    // Build target URI by appending the request target to the configured base.
-    //
-    // URI.resolve replaces the base path outright when the reference is absolute,
-    // and request targets always are, so the base path has to be prepended
-    // explicitly. Without this a target of "http://localhost:7000/my-server"
-    // forwards "/api/ping" as "/api/ping" instead of "/my-server/api/ping".
-    private URI resolveTarget(String requestTarget) {
+    // Build upstream request-target by prepending the configured base path directly,
+    // without URI.resolve (which rejects valid HTTP query characters like []/{} and
+    // treats leading // as a network-path authority).
+    private String buildUpstreamTarget(String requestTarget) {
         String basePath = target.getRawPath();
 
         if (basePath == null || basePath.isEmpty() || basePath.equals("/")) {
-            return target.resolve(requestTarget);
+            return requestTarget.isEmpty() ? "/" : requestTarget;
         }
 
         if (basePath.endsWith("/")) {
             basePath = basePath.substring(0, basePath.length() - 1);
         }
 
-        return target.resolve(basePath + requestTarget);
+        return requestTarget.startsWith("/") ? basePath + requestTarget : basePath + "/" + requestTarget;
     }
 
     @Override
@@ -106,11 +103,11 @@ public class ProxyHandler implements HttpHandler {
                 && options.contains("upgrade");
         Socket upstream = null;
         try {
-            URI uri = resolveTarget(request.requestTarget);
+            String upstreamTarget = buildUpstreamTarget(request.requestTarget);
             upstream = openSocket();
             OutputStream out = new BufferedOutputStream(upstream.getOutputStream());
             HttpInput in = new HttpInput(upstream.getInputStream(), 8192);
-            writeRequestHeaders(request, uri, out, options, upgrade);
+            writeRequestHeaders(request, upstreamTarget, out, options, upgrade);
 
             if (request.requestHasBody()) {
                 try {
@@ -191,15 +188,11 @@ public class ProxyHandler implements HttpHandler {
         return HOP_BY_HOP.contains(header.name) || options.contains(header.name);
     }
 
-    private void writeRequestHeaders(HttpRequest request, URI uri, OutputStream out, Set<String> options, boolean upgrade) throws IOException {
-        String path = uri.getRawPath();
-        if (path == null || path.isEmpty()) path = "/";
-        if (uri.getRawQuery() != null) path += "?" + uri.getRawQuery();
-
+    private void writeRequestHeaders(HttpRequest request, String path, OutputStream out, Set<String> options, boolean upgrade) throws IOException {
         String host = target.getHost();
         if (target.getPort() != -1) host += ":" + target.getPort();
         out.write((request.requestMethod + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n")
-                .getBytes(StandardCharsets.US_ASCII));
+                .getBytes(StandardCharsets.ISO_8859_1));
         String connection = upgrade ? "Connection: Upgrade\r\nUpgrade: websocket\r\n" : "Connection: close\r\n";
         out.write(connection.getBytes(StandardCharsets.US_ASCII));
         for (Header h : request.requestHeadersInOrder) {
@@ -250,11 +243,23 @@ public class ProxyHandler implements HttpHandler {
         if ("HEAD".equals(request.requestMethod) || HttpRequest.isBodylessStatus(status) || length == 0) {
             request.skipBody();
         } else if (chunked) {
-            request.writeStream(new ChunkedInputStream(in));
+            streamWithFlush(request, new ChunkedInputStream(in));
         } else if (length > 0) {
             request.writeStream(new ContentLengthInputStream(in, length));
         } else {
-            request.writeStream(in);
+            streamWithFlush(request, in);
+        }
+    }
+
+    // Flush after every read so SSE / chunked streams don't stall inside the 64 KB output buffer
+    private static void streamWithFlush(HttpRequest request, InputStream source) throws IOException {
+        try (OutputStream out = request.responseBody()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = source.read(buf)) != -1) {
+                out.write(buf, 0, n);
+                out.flush();
+            }
         }
     }
 

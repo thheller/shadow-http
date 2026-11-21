@@ -36,7 +36,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
         this.maxMessageSize = connection.getServer().getConfig().getMaximumWebSocketMessageSize();
         this.in = in;
         this.handler = handler;
-        this.out = connection.getOutputStream();
+        this.out = new BufferedOutputStream(connection.getOutputStream(), 8192);
         this.wsIn = new WebSocketInput(this.in, perMessageDeflate);
         this.perMessageDeflate = perMessageDeflate;
     }
@@ -136,8 +136,14 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
             }
             reportError(e);
         } finally {
-            if (perMessageDeflate != null) {
-                perMessageDeflate.close();
+            writeLock.lock();
+            try {
+                wasClosed = true;
+                if (perMessageDeflate != null) {
+                    perMessageDeflate.close();
+                }
+            } finally {
+                writeLock.unlock();
             }
         }
 
@@ -192,6 +198,9 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
     }
 
     private void sendInternal(int opcode, byte[] bytes, int offset, int length) throws IOException {
+        if (wasClosed) {
+            throw new IOException("WebSocket is closed");
+        }
 
         Objects.checkFromIndexSize(offset, length, bytes.length);
 
@@ -219,41 +228,53 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
     }
 
     public static void sendFrame(OutputStream out, boolean fin, boolean rsv1, int opcode, byte[] payload, int offset, int length) throws IOException {
-        int b0 = (fin ? 0x80 : 0)
-                | (rsv1 ? 0x40 : 0)
-                | (opcode & 0x0F);
+        byte[] header = new byte[10];
+        int headerLen;
 
-        out.write(b0);
+        header[0] = (byte) ((fin ? 0x80 : 0)
+                | (rsv1 ? 0x40 : 0)
+                | (opcode & 0x0F));
 
         if (length <= 125) {
-            out.write(length);
+            header[1] = (byte) length;
+            headerLen = 2;
         } else if (length <= 0xFFFF) {
-            out.write(126);
-            out.write(((length >> 8) & 0xFF));
-            out.write((length & 0xFF));
+            header[1] = 126;
+            header[2] = (byte) ((length >> 8) & 0xFF);
+            header[3] = (byte) (length & 0xFF);
+            headerLen = 4;
         } else {
-            out.write(127);
+            header[1] = 127;
             // length is a positive int, so the high 32 bits of the 64-bit extended length are always 0
-            // wonder who sends single frames that don't fit 32 bits, but we capped it at MAX_FRAME_SIZE
-            out.write(0);
-            out.write(0);
-            out.write(0);
-            out.write(0);
-            out.write((length >> 24) & 0xFF);
-            out.write((length >> 16) & 0xFF);
-            out.write((length >> 8) & 0xFF);
-            out.write(length & 0xFF);
+            header[2] = 0;
+            header[3] = 0;
+            header[4] = 0;
+            header[5] = 0;
+            header[6] = (byte) ((length >> 24) & 0xFF);
+            header[7] = (byte) ((length >> 16) & 0xFF);
+            header[8] = (byte) ((length >> 8) & 0xFF);
+            header[9] = (byte) (length & 0xFF);
+            headerLen = 10;
         }
 
-        out.write(payload, offset, length);
+        out.write(header, 0, headerLen);
+        if (length > 0) {
+            out.write(payload, offset, length);
+        }
         out.flush();
     }
 
 
     @Override
     public void sendPing(byte[] payload) throws IOException {
+        if (payload.length > 125) {
+            throw new IllegalArgumentException("Control frame payload must be <= 125 bytes");
+        }
         writeLock.lock();
         try {
+            if (wasClosed) {
+                throw new IOException("WebSocket is closed");
+            }
             sendFrame(out, true, false, WebSocketFrame.OPCODE_PING, payload, 0, payload.length);
         } finally {
             writeLock.unlock();
@@ -262,8 +283,14 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
 
     @Override
     public void sendPong(byte[] payload) throws IOException {
+        if (payload.length > 125) {
+            throw new IllegalArgumentException("Control frame payload must be <= 125 bytes");
+        }
         writeLock.lock();
         try {
+            if (wasClosed) {
+                throw new IOException("WebSocket is closed");
+            }
             sendFrame(out, true, false, WebSocketFrame.OPCODE_PONG, payload, 0, payload.length);
         } finally {
             writeLock.unlock();

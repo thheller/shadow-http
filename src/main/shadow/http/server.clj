@@ -43,22 +43,26 @@
   (start [this new-context]
     (let [write-loop
           (vthread
-            (loop []
-              (when-some [msg (async/<!! ws-out)]
-                (cond
-                  (string? msg)
-                  (do (.sendText new-context msg)
-                      (recur))
+            (try
+              (loop []
+                (when-some [msg (async/<!! ws-out)]
+                  (cond
+                    (string? msg)
+                    (do (.sendText new-context msg)
+                        (recur))
 
-                  (= byte/1 (class msg))
-                  (do (.sendBinary new-context msg)
-                      (recur))
+                    (bytes? msg)
+                    (do (.sendBinary new-context ^bytes msg)
+                        (recur))
 
-                  :else
-                  ()
-
-                  )))
-            (ws-close! new-context))]
+                    :else
+                    (throw (IllegalArgumentException.
+                             (str "unsupported websocket message type: " (type msg)))))))
+              (catch IOException _
+                ;; other side went away while writing
+                nil)
+              (finally
+                (ws-close! new-context))))]
 
       (when ws-loop
         (vthread

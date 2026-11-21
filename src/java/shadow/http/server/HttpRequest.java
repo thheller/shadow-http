@@ -77,7 +77,7 @@ public class HttpRequest {
     public boolean autoChunk = true;
     public long responseLength = -1;
 
-    public HttpRequest(HttpExchange exchange, String requestMethod, String requestTarget, String requestVersion) {
+    public HttpRequest(HttpExchange exchange, String requestMethod, String requestTarget, String requestVersion) throws BadRequestException {
         this.exchange = exchange;
         this.requestMethod = requestMethod;
         this.requestTarget = requestTarget;
@@ -85,10 +85,10 @@ public class HttpRequest {
 
         int qIdx = requestTarget.indexOf('?');
         if (qIdx >= 0) {
-            this.requestPath = decodeComponent(requestTarget.substring(0, qIdx));
+            this.requestPath = decodePath(requestTarget.substring(0, qIdx));
             this.requestQueryString = requestTarget.substring(qIdx + 1);
         } else {
-            this.requestPath = decodeComponent(requestTarget);
+            this.requestPath = decodePath(requestTarget);
             this.requestQueryString = null;
         }
     }
@@ -210,6 +210,39 @@ public class HttpRequest {
         return params;
     }
 
+    // Percent-decode URI path per RFC 3986 (literal '+' stays '+', unlike application/x-www-form-urlencoded)
+    static String decodePath(String s) throws BadRequestException {
+        int firstPercent = s.indexOf('%');
+        if (firstPercent < 0) {
+            return s;
+        }
+
+        int len = s.length();
+        byte[] bytes = new byte[len];
+        int out = 0;
+        for (int i = 0; i < firstPercent; i++) {
+            bytes[out++] = (byte) s.charAt(i);
+        }
+        for (int i = firstPercent; i < len; i++) {
+            char c = s.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= len) {
+                    throw new BadRequestException("Invalid percent-encoding in request path");
+                }
+                int hi = Character.digit(s.charAt(i + 1), 16);
+                int lo = Character.digit(s.charAt(i + 2), 16);
+                if (hi < 0 || lo < 0) {
+                    throw new BadRequestException("Invalid percent-encoding in request path");
+                }
+                bytes[out++] = (byte) ((hi << 4) | lo);
+                i += 2;
+            } else {
+                bytes[out++] = (byte) c;
+            }
+        }
+        return new String(bytes, 0, out, StandardCharsets.UTF_8);
+    }
+
     private static String decodeComponent(String s) {
         // fast path: no percent-encoding or plus signs
         if (s.indexOf('%') < 0 && s.indexOf('+') < 0) {
@@ -238,7 +271,7 @@ public class HttpRequest {
         }
 
         String connection = getRequestHeaderValue("connection");
-        if (connection == null || !connection.toLowerCase().contains("upgrade")) {
+        if (connection == null || !hasConnectionToken(connection, "upgrade")) {
             throw new IllegalStateException("Missing or invalid Connection header");
         }
 
@@ -316,7 +349,7 @@ public class HttpRequest {
                 requestBody = new ContentLengthInputStream(exchange.in, requestBodyLength);
             }
             case CHUNKED -> {
-                requestBody = new ChunkedInputStream(exchange.in, ChunkedInputStream.DEFAULT_MAX_CHUNK_SIZE,
+                requestBody = new ChunkedInputStream(exchange.in, Long.MAX_VALUE,
                         getConfig().getMaximumRequestBodySize());
             }
         }
@@ -348,6 +381,10 @@ public class HttpRequest {
         if (isContentLength(name)) {
             setResponseContentLength(value);
         } else {
+            String existing = findResponseHeaderKey(name);
+            if (existing != null && !existing.equals(name)) {
+                responseHeaders.remove(existing);
+            }
             responseHeaders.put(name, new ArrayList<>(Collections.singletonList(value)));
         }
         return this;
@@ -358,7 +395,9 @@ public class HttpRequest {
         if (isContentLength(name)) {
             setResponseContentLength(value);
         } else {
-            responseHeaders.computeIfAbsent(name, s -> new ArrayList<>()).add(value);
+            String existing = findResponseHeaderKey(name);
+            String key = existing != null ? existing : name;
+            responseHeaders.computeIfAbsent(key, s -> new ArrayList<>()).add(value);
         }
         return this;
     }
@@ -389,14 +428,30 @@ public class HttpRequest {
         return false;
     }
 
-    // header names are stored as given, which for ring handlers is usually not lowercase
-    public boolean hasResponseHeader(String name) {
+    private String findResponseHeaderKey(String name) {
+        if (responseHeaders.containsKey(name)) {
+            return name;
+        }
         for (String key : responseHeaders.keySet()) {
             if (key.equalsIgnoreCase(name)) {
-                return true;
+                return key;
             }
         }
-        return false;
+        return null;
+    }
+
+    // header names are stored as given, which for ring handlers is usually not lowercase
+    public boolean hasResponseHeader(String name) {
+        return findResponseHeaderKey(name) != null;
+    }
+
+    public String getResponseHeaderValue(String name) {
+        String key = findResponseHeaderKey(name);
+        if (key == null) {
+            return null;
+        }
+        List<String> values = responseHeaders.get(key);
+        return (values == null || values.isEmpty()) ? null : values.getFirst();
     }
 
     void setResponseContentLength(String value) {
@@ -595,6 +650,48 @@ public class HttpRequest {
         return gzip > 0 && gzip >= identity;
     }
 
+    private static boolean hasConnectionToken(String headerValue, String token) {
+        if (headerValue == null || headerValue.isEmpty()) {
+            return false;
+        }
+        if (token.equalsIgnoreCase(headerValue)) {
+            return true;
+        }
+        int start = 0;
+        int len = headerValue.length();
+        while (start <= len) {
+            int comma = headerValue.indexOf(',', start);
+            if (comma < 0) comma = len;
+            String part = headerValue.substring(start, comma).trim();
+            if (token.equalsIgnoreCase(part)) {
+                return true;
+            }
+            start = comma + 1;
+        }
+        return false;
+    }
+
+    private static boolean isIncompressibleContentType(String contentType) {
+        if (contentType == null) {
+            return false;
+        }
+        int semi = contentType.indexOf(';');
+        String type = (semi >= 0 ? contentType.substring(0, semi) : contentType).trim().toLowerCase(Locale.ROOT);
+        if (type.equals("image/svg+xml")) {
+            return false;
+        }
+        return type.startsWith("image/")
+                || type.startsWith("audio/")
+                || type.startsWith("video/")
+                || type.startsWith("font/")
+                || type.equals("text/event-stream")
+                || type.equals("application/zip")
+                || type.equals("application/gzip")
+                || type.equals("application/x-gzip")
+                || type.equals("application/pdf")
+                || type.equals("application/octet-stream");
+    }
+
     void beginResponse() throws IOException {
         if (state != State.PENDING) {
             throw new IllegalStateException("response already committed");
@@ -602,6 +699,7 @@ public class HttpRequest {
 
         boolean head = "HEAD".equals(requestMethod);
         boolean bodylessStatus = isBodylessStatus(responseStatus);
+        boolean http10 = "HTTP/1.0".equals(requestVersion);
         if (!responseBody && !head && !bodylessStatus) {
             responseLength = 0;
         }
@@ -611,19 +709,43 @@ public class HttpRequest {
         writeStatusLine(responseStatus, responseStatusText);
 
         if (responseBody && autoCompress) {
-            // content the handler already encoded (e.g. pre-gzipped) must not be compressed again
+            // content the handler already encoded (e.g. pre-gzipped) or binary/SSE types must not be compressed
             autoCompress = !hasResponseHeader("content-encoding")
+                    && !isIncompressibleContentType(getResponseHeaderValue("content-type"))
                     && acceptsGzip(getRequestHeaderValue("accept-encoding"));
             if (autoCompress) {
                 setResponseHeader("content-encoding", "gzip");
+                if (!hasResponseHeader("vary")) {
+                    setResponseHeader("vary", "accept-encoding");
+                }
             }
         }
 
-        // compressed length isn't known upfront, uncompressed length known so no need to chunk
+        // compressed length isn't known upfront, uncompressed length known so no need to chunk.
+        // HTTP/1.0 doesn't support chunked encoding, so unknown-length bodies delimit by closing.
         if (responseBody && autoCompress) {
-            autoChunk = true;
+            autoChunk = !http10;
+            if (http10) {
+                closeAfter = true;
+            }
         } else if (responseBody && responseLength >= 0) {
             autoChunk = false;
+        } else if (responseBody && autoChunk && http10) {
+            autoChunk = false;
+            closeAfter = true;
+        }
+
+        String reqConnection = getRequestHeaderValue("connection");
+        String resConnection = getResponseHeaderValue("connection");
+        if (hasConnectionToken(resConnection, "close")) {
+            closeAfter = true;
+        }
+        if (http10) {
+            if (!hasConnectionToken(reqConnection, "keep-alive")) {
+                closeAfter = true;
+            }
+        } else if (!closeAfter && hasConnectionToken(reqConnection, "close")) {
+            closeAfter = true;
         }
 
         for (Map.Entry<String, List<String>> header : responseHeaders.entrySet()) {
@@ -640,14 +762,12 @@ public class HttpRequest {
             writeHeader("content-length", Long.toString(responseLength));
         }
 
-        if (!closeAfter && "close".equals(getRequestHeaderValue("connection"))) {
-            closeAfter = true;
-        }
-
-        if (closeAfter) {
-            writeHeader("connection", "close");
-        } else if ("HTTP/1.0".equals(requestVersion)) {
-            writeHeader("connection", "keep-alive");
+        if (!hasResponseHeader("connection")) {
+            if (closeAfter) {
+                writeHeader("connection", "close");
+            } else if (http10) {
+                writeHeader("connection", "keep-alive");
+            }
         }
 
         writeHeaderEnd();
@@ -742,7 +862,7 @@ public class HttpRequest {
     void writeHeader(String name, String value) throws IOException {
         exchange.out.write(name.getBytes(StandardCharsets.US_ASCII));
         exchange.out.write(COLON_SP);
-        exchange.out.write(value.getBytes(StandardCharsets.US_ASCII));
+        exchange.out.write(value.getBytes(StandardCharsets.ISO_8859_1));
         exchange.out.write(CRLF);
     }
 

@@ -373,6 +373,52 @@ public class HttpInput extends InputStream {
             throw new IllegalArgumentException("maxSize must be >= 0");
         }
 
+        long chunkSize = readChunkSize();
+
+        // Parse optional chunk extensions, then consume CRLF
+        Map<String, String> extensions = readChunkExtensions();
+
+        if (chunkSize == 0) {
+            return new Chunk(new byte[0], extensions, readChunkTrailers());
+        }
+
+        if (chunkSize > maxSize) {
+            throw new BadRequestException("Chunk size too large: " + chunkSize);
+        }
+
+        byte[] data = new byte[(int) chunkSize];
+        readFully(data);
+        consumeLineEnding("Chunk data must be followed by CRLF");
+
+        return new Chunk(data, extensions, Collections.emptyList());
+    }
+
+    long readChunkHeader() throws IOException {
+        long chunkSize = readChunkSize();
+        readChunkExtensions();
+        return chunkSize;
+    }
+
+    void consumeChunkDataLineEnding() throws IOException {
+        consumeLineEnding("Chunk data must be followed by CRLF");
+    }
+
+    List<Header> readChunkTrailers() throws IOException {
+        List<Header> trailers = new ArrayList<>();
+        while (true) {
+            Header header = readHeader();
+            if (header == null) {
+                break;
+            }
+            if (trailers.size() >= HttpExchange.MAX_HEADERS) {
+                throw new BadRequestException("Too many trailer fields");
+            }
+            trailers.add(header);
+        }
+        return trailers;
+    }
+
+    private long readChunkSize() throws IOException {
         // Parse chunk-size: 1*HEXDIG directly from buffer
         long chunkSize = 0;
         int digitCount = 0;
@@ -401,33 +447,7 @@ public class HttpInput extends InputStream {
             throw new BadRequestException("Missing chunk-size");
         }
 
-        // Parse optional chunk extensions, then consume CRLF
-        Map<String, String> extensions = readChunkExtensions();
-
-        if (chunkSize == 0) {
-            List<Header> trailers = new ArrayList<>();
-            while (true) {
-                Header header = readHeader();
-                if (header == null) {
-                    break;
-                }
-                if (trailers.size() >= HttpExchange.MAX_HEADERS) {
-                    throw new BadRequestException("Too many trailer fields");
-                }
-                trailers.add(header);
-            }
-            return new Chunk(new byte[0], extensions, trailers);
-        }
-
-        if (chunkSize > maxSize) {
-            throw new BadRequestException("Chunk size too large: " + chunkSize);
-        }
-
-        byte[] data = new byte[(int) chunkSize];
-        readFully(data);
-        consumeLineEnding("Chunk data must be followed by CRLF");
-
-        return new Chunk(data, extensions, Collections.emptyList());
+        return chunkSize;
     }
 
     @Override

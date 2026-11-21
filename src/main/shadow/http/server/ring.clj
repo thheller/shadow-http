@@ -213,13 +213,13 @@
     :else
     (throw (IllegalArgumentException. (str "expected a ByteBuffer or byte array, got: " (type data))))))
 
-(deftype RingWebSocketHandler [^WebSocketConnection ctx listener ping-listener?]
+(deftype RingWebSocketHandler [^:volatile-mutable ^WebSocketConnection ctx listener ping-listener?]
   WebSocketHandler
-  (start [_ ws-ctx]
-    (let [socket (RingWebSocketHandler. ws-ctx listener ping-listener?)]
-      ;; ring ignores whatever on-open returns
-      (ring-ws/on-open listener socket)
-      socket))
+  (start [this ws-ctx]
+    (set! ctx ws-ctx)
+    ;; ring ignores whatever on-open returns
+    (ring-ws/on-open listener this)
+    this)
 
   (onText [this payload]
     (ring-ws/on-message listener this payload))

@@ -551,4 +551,37 @@ public class WebSocketExchangeTest {
             assertEquals(1009, parseServerFrames(output.toByteArray()).getFirst().getCloseStatusCode());
         }
     }
+
+    @Test
+    void sendAfterCloseThrowsAndDoesNotEmitFrames() throws IOException {
+        var output = new ByteArrayOutputStream();
+        var connection = new TestConnection(new Server(), "", output);
+        var exchange = new WebSocketExchange(connection, connection.in, new WebSocketHandler.Base(), null);
+        exchange.sendClose(1000);
+        assertThrows(IOException.class, () -> exchange.sendText("after close"));
+        assertThrows(IOException.class, () -> exchange.sendBinary(new byte[]{1}));
+        assertThrows(IOException.class, () -> exchange.sendPing());
+        assertThrows(IOException.class, () -> exchange.sendPong());
+        assertEquals(1, parseServerFrames(output.toByteArray()).size());
+    }
+
+    @Test
+    void decompressHandlesFinalDeflateBlockWithContextTakeover() throws IOException {
+        try (var pmd = new PerMessageDeflate(false, false)) {
+            // Compress a message using finish() (BFINAL=1) and strip nothing (raw final block)
+            var deflater = new java.util.zip.Deflater(java.util.zip.Deflater.DEFAULT_COMPRESSION, true);
+            byte[] input1 = "first final block".getBytes(StandardCharsets.UTF_8);
+            deflater.setInput(input1);
+            deflater.finish();
+            byte[] buf = new byte[128];
+            int n = deflater.deflate(buf);
+            deflater.end();
+            byte[] msg1 = Arrays.copyOf(buf, n);
+
+            byte[] msg2 = pmd.compress("second normal message".getBytes(StandardCharsets.UTF_8));
+
+            assertEquals("first final block", new String(pmd.decompress(msg1), StandardCharsets.UTF_8));
+            assertEquals("second normal message", new String(pmd.decompress(msg2), StandardCharsets.UTF_8));
+        }
+    }
 }

@@ -2,6 +2,7 @@ package shadow.http.server;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Locale;
 import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
@@ -79,7 +80,7 @@ public class PerMessageDeflate implements AutoCloseable {
         // the end which RFC 7692 Section 7.2.1 requires us to strip.
         // Calling finish() would write a final DEFLATE block and then require reset()
         // which destroys the LZ77 sliding-window context needed for context takeover.
-        ByteArrayOutputStream baos = new ByteArrayOutputStream(input.length);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(length);
         byte[] buf = new byte[BUFFER_SIZE];
 
         int n;
@@ -140,8 +141,15 @@ public class PerMessageDeflate implements AutoCloseable {
                 }
                 baos.write(buf, 0, n);
             }
+            if (inflater.needsDictionary()) {
+                throw new WebSocketProtocolException(1007, "WebSocket permessage-deflate stream requires preset dictionary");
+            }
+            if (inflater.finished()) {
+                // Client ended the message with a BFINAL=1 block; reset so subsequent messages still inflate.
+                inflater.reset();
+            }
         } catch (DataFormatException e) {
-            throw new IOException("WebSocket permessage-deflate decompression failed", e);
+            throw new WebSocketProtocolException(1007, "WebSocket permessage-deflate decompression failed: " + e.getMessage());
         }
 
         // When clientNoContextTakeover is false, the inflater context is preserved
@@ -193,7 +201,7 @@ public class PerMessageDeflate implements AutoCloseable {
                     continue;
                 }
                 int eqIdx = param.indexOf('=');
-                String key = (eqIdx >= 0 ? param.substring(0, eqIdx) : param).trim().toLowerCase();
+                String key = (eqIdx >= 0 ? param.substring(0, eqIdx) : param).trim().toLowerCase(Locale.ROOT);
                 String value = (eqIdx >= 0 ? param.substring(eqIdx + 1).trim().replace("\"", "") : null);
 
                 switch (key) {

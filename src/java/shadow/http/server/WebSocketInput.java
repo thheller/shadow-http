@@ -11,10 +11,9 @@ import java.io.InputStream;
  */
 public class WebSocketInput {
     /**
-     * Section 10.4: Implementation-specific limit on frame payload size.
-     * Default 16 MB; adjust as needed.
+     * Section 10.4: Default limit on frame payload size when using {@link #readFrame()}.
      */
-    private static final long MAX_PAYLOAD_LENGTH = 16 * 1024 * 1024;
+    private static final int DEFAULT_MAX_PAYLOAD_LENGTH = 16 * 1024 * 1024;
 
     /**
      * Section 5.5: Control frames MUST have a payload length of 125 bytes or less.
@@ -68,7 +67,7 @@ public class WebSocketInput {
      * @throws WebSocketProtocolException on protocol violations
      */
     public WebSocketFrame readFrame() throws IOException {
-        return readFrame(Integer.MAX_VALUE);
+        return readFrame(DEFAULT_MAX_PAYLOAD_LENGTH);
     }
 
     WebSocketFrame readFrame(int remainingMessageSize) throws IOException {
@@ -127,13 +126,9 @@ public class WebSocketInput {
             }
         }
 
-        // Section 10.4: enforce implementation limit
+        // Section 10.4: enforce configured message size limit
         if (!isControl && payloadLength > remainingMessageSize) {
             throw new WebSocketProtocolException(1009, "Message exceeds maximum size");
-        }
-        if (payloadLength > MAX_PAYLOAD_LENGTH) {
-            throw new WebSocketProtocolException(
-                    1009, "Frame payload too large: " + payloadLength + " bytes (max " + MAX_PAYLOAD_LENGTH + ")");
         }
 
         // --- Masking key (4 bytes, since masked is always true for client frames) ---

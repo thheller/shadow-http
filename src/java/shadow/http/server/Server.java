@@ -3,22 +3,25 @@ package shadow.http.server;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.security.KeyStore;
-import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public class Server {
     final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     final Config config;
+    final Set<SocketConnection> activeConnections = ConcurrentHashMap.newKeySet();
 
-    private HttpHandler handler = null;
+    private volatile HttpHandler handler = null;
+    private volatile boolean stopped = false;
     private Acceptor acceptor = null;
     private ServerSocket socket = null;
     private SSLContext sslContext = null;
@@ -93,14 +96,23 @@ public class Server {
     }
 
     public void stop() throws IOException, InterruptedException {
+        stopped = true;
+
         if (acceptor != null) {
             acceptor.socket.close();
         }
 
-        List<Runnable> remaining = executor.shutdownNow();
+        for (SocketConnection conn : activeConnections) {
+            try {
+                conn.socket.close();
+            } catch (IOException ignored) {
+            }
+        }
 
-        if (!remaining.isEmpty()) {
-            // FIXME: do something?
+        executor.shutdownNow();
+
+        if (acceptor != null) {
+            acceptor.thread.join();
         }
     }
 
@@ -112,9 +124,17 @@ public class Server {
     }
 
     void connectionStarted(SocketConnection connection) {
+        activeConnections.add(connection);
+        if (stopped) {
+            try {
+                connection.socket.close();
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     void connectionCompleted(SocketConnection connection) {
+        activeConnections.remove(connection);
     }
 
     private static class Acceptor implements Runnable {
@@ -138,7 +158,15 @@ public class Server {
             try {
                 while (!socket.isClosed()) {
                     Socket client = socket.accept();
-                    server.executor.execute(new SocketConnection(server, client));
+                    try {
+                        server.executor.execute(new SocketConnection(server, client));
+                    } catch (RejectedExecutionException e) {
+                        try {
+                            client.close();
+                        } catch (IOException ignored) {
+                        }
+                        break;
+                    }
                 }
             } catch (SocketException e) {
                 // ignore, most likely closed

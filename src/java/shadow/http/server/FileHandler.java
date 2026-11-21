@@ -3,15 +3,24 @@ package shadow.http.server;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class FileHandler implements HttpHandler {
 
     final Path root;
+    final Path realRoot;
 
     public FileHandler(Path root) {
         this.root = root;
+        Path resolved;
+        try {
+            resolved = root.toRealPath();
+        } catch (IOException e) {
+            resolved = root.normalize().toAbsolutePath();
+        }
+        this.realRoot = resolved;
     }
 
     public static boolean servableFile(Path path) throws IOException {
@@ -36,11 +45,16 @@ public class FileHandler implements HttpHandler {
         // but we could only serve one?
         String uri = request.getRequestPath();
 
-        if (!uri.startsWith("/")) {
+        if (!uri.startsWith("/") || uri.indexOf('\0') >= 0) {
             return;
         }
 
-        Path file = root.resolve(uri.substring(1)).normalize();
+        Path file;
+        try {
+            file = root.resolve(uri.substring(1)).normalize();
+        } catch (InvalidPathException e) {
+            return;
+        }
 
         // prevent path traversal attacks (e.g. /../../../etc/passwd)
         if (!file.startsWith(root)) {
@@ -55,12 +69,12 @@ public class FileHandler implements HttpHandler {
             return;
         }
 
-        serveContainedFile(request, root, file);
+        serveContainedFile(request, realRoot, file);
     }
 
-    static void serveContainedFile(HttpRequest request, Path root, Path file) throws IOException {
+    static void serveContainedFile(HttpRequest request, Path realRoot, Path file) throws IOException {
         Path realFile = file.toRealPath();
-        if (realFile.startsWith(root.toRealPath())) {
+        if (realFile.startsWith(realRoot)) {
             request.serveFile(realFile, file.getFileName().toString());
         }
     }

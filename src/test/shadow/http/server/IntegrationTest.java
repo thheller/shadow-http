@@ -1060,4 +1060,29 @@ public class IntegrationTest {
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }
+
+    @Test
+    void serverStopClosesIdleKeepAliveConnections() throws Exception {
+        Server tempServer = new Server();
+        tempServer.setHandler(req -> req.writeString("ok"));
+        tempServer.start(0);
+        int tempPort = tempServer.getSocket().getLocalPort();
+
+        try (var socket = new Socket("127.0.0.1", tempPort)) {
+            socket.setSoTimeout(2000);
+            socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+
+            var in = new HttpInput(socket.getInputStream(), 8192);
+            assertEquals("HTTP/1.1", in.readResponseVersion());
+            assertEquals(200, in.readStatusCode());
+            in.readReasonPhrase();
+            while (in.readHeader() != null) {}
+            assertEquals("ok", new String(in.readNBytes(2), StandardCharsets.US_ASCII));
+
+            // Socket is now idle in keep-alive; stopping server must close it promptly
+            tempServer.stop();
+            assertEquals(-1, in.read());
+        }
+    }
 }

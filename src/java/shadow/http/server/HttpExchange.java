@@ -63,12 +63,20 @@ public class HttpExchange implements Exchange {
                             .setResponseHeader("content-type", "text/plain")
                             .writeString("Not found.");
                 }
-                if (request.requestHasBody() && !request.closeAfter) {
+                if (!upgraded && request.requestHasBody() && !request.closeAfter) {
                     request.requestBody().close();
                 }
             } catch (BadRequestException e) {
                 if (!request.isCommitted()) {
                     sendBadRequest(e);
+                }
+                break;
+            } catch (IOException e) {
+                throw e;
+            } catch (Exception e) {
+                e.printStackTrace();
+                if (!request.isCommitted()) {
+                    sendInternalError(e);
                 }
                 break;
             }
@@ -93,10 +101,19 @@ public class HttpExchange implements Exchange {
 
     private void sendBadRequest(BadRequestException e) throws IOException {
         // just send raw text, maybe don't have a request object
-        String body = e.getMessage();
+        String body = e.getMessage() != null ? e.getMessage() : "Bad Request";
+        sendErrorResponse(400, body);
+    }
+
+    private void sendInternalError(Exception e) throws IOException {
+        String body = e.getMessage() != null ? e.getClass().getSimpleName() + ": " + e.getMessage() : e.getClass().getSimpleName();
+        sendErrorResponse(500, body);
+    }
+
+    private void sendErrorResponse(int status, String body) throws IOException {
         byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 
-        String headers = "HTTP/1.1 400 \r\n" +
+        String headers = "HTTP/1.1 " + status + " \r\n" +
                 "content-type: text/plain\r\n" +
                 "content-length: " + bodyBytes.length + "\r\n" +
                 "connection: close\r\n" +

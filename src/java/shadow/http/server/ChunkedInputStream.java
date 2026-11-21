@@ -1,54 +1,58 @@
 package shadow.http.server;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Objects;
 
 /**
  * An InputStream backed by chunked Transfer-Encoding.
- * Reads chunks via {@link HttpInput#readChunk(int)} and presents them as a
- * contiguous byte stream. Returns EOF after the terminal (zero-length) chunk
- * has been consumed. Does not close the underlying stream.
+ * Streams chunk payloads directly from {@link HttpInput} without buffering
+ * entire chunks in memory. Returns EOF after the terminal (zero-length) chunk
+ * and trailers have been consumed. Does not close the underlying stream.
  */
 public class ChunkedInputStream extends InputStream {
 
-    static final int DEFAULT_MAX_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB
+    static final int DEFAULT_MAX_CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB (kept for backwards compatibility)
 
     private final HttpInput in;
-    private final int maxChunkSize;
+    private final long maxChunkSize;
 
     private long remaining;
+    private long chunkRemaining;
+    private boolean needChunkEnd;
     private boolean failed;
-    private byte[] currentChunk;
-    private int currentOffset;
     private boolean eof;
 
     public ChunkedInputStream(HttpInput in) {
-        this(in, DEFAULT_MAX_CHUNK_SIZE);
+        this(in, Long.MAX_VALUE, Long.MAX_VALUE);
     }
 
     public ChunkedInputStream(HttpInput in, int maxChunkSize) {
         this(in, maxChunkSize, Long.MAX_VALUE);
     }
 
-    ChunkedInputStream(HttpInput in, int maxChunkSize, long maximumLength) {
-        this.remaining = maximumLength;
+    ChunkedInputStream(HttpInput in, long maxChunkSize, long maximumLength) {
         this.in = in;
         this.maxChunkSize = maxChunkSize;
-        this.currentChunk = null;
-        this.currentOffset = 0;
+        this.remaining = maximumLength;
+        this.chunkRemaining = 0;
+        this.needChunkEnd = false;
         this.eof = false;
     }
 
     @Override
     public int read() throws IOException {
-        if (eof) {
+        if (eof || !ensureChunkData()) {
             return -1;
         }
-        if (!ensureChunkData()) {
-            return -1;
+        int b = in.read();
+        if (b == -1) {
+            failed = true;
+            throw new EOFException("Unexpected end of stream reading chunk data");
         }
-        return currentChunk[currentOffset++] & 0xFF;
+        chunkRemaining--;
+        return b;
     }
 
     @Override
@@ -60,32 +64,42 @@ public class ChunkedInputStream extends InputStream {
         if (eof || !ensureChunkData()) {
             return -1;
         }
-        int available = currentChunk.length - currentOffset;
-        int toCopy = Math.min(len, available);
-        System.arraycopy(currentChunk, currentOffset, buf, off, toCopy);
-        currentOffset += toCopy;
-        return toCopy;
+        int toRead = (int) Math.min(len, chunkRemaining);
+        int n = in.read(buf, off, toRead);
+        if (n == -1) {
+            failed = true;
+            throw new EOFException("Unexpected end of stream reading chunk data");
+        }
+        chunkRemaining -= n;
+        return n;
     }
 
     @Override
-    public int available() {
-        if (eof || currentChunk == null) {
+    public int available() throws IOException {
+        if (eof || chunkRemaining <= 0) {
             return 0;
         }
-        return currentChunk.length - currentOffset;
+        return (int) Math.min(chunkRemaining, in.available());
     }
 
     @Override
     public void close() throws IOException {
         // Drain remaining chunks so the connection is left in a clean state
         // for keep-alive. Do NOT close the underlying stream.
+        if (eof) {
+            return;
+        }
+        byte[] skip = new byte[4096];
         while (!eof) {
             if (!ensureChunkData()) {
                 break;
             }
-            // Discard the current chunk
-            currentChunk = null;
-            currentOffset = 0;
+            while (chunkRemaining > 0) {
+                int n = read(skip, 0, (int) Math.min(skip.length, chunkRemaining));
+                if (n == -1) {
+                    return;
+                }
+            }
         }
     }
 
@@ -94,27 +108,31 @@ public class ChunkedInputStream extends InputStream {
      * Returns true if data is available, false if EOF.
      */
     private boolean ensureChunkData() throws IOException {
-        while (currentChunk == null || currentOffset >= currentChunk.length) {
+        while (chunkRemaining == 0) {
             if (failed) throw new BadRequestException("Invalid chunked body");
-            Chunk chunk;
             try {
-                chunk = in.readChunk((int) Math.min(maxChunkSize, remaining));
+                if (needChunkEnd) {
+                    in.consumeChunkDataLineEnding();
+                    needChunkEnd = false;
+                }
+
+                long chunkSize = in.readChunkHeader();
+                if (chunkSize == 0) {
+                    in.readChunkTrailers();
+                    eof = true;
+                    return false;
+                }
+
+                if (chunkSize > maxChunkSize || chunkSize > remaining) {
+                    throw new BadRequestException("Chunk size too large: " + chunkSize);
+                }
+
+                remaining -= chunkSize;
+                chunkRemaining = chunkSize;
+                needChunkEnd = true;
             } catch (IOException e) {
                 failed = true;
                 throw e;
-            }
-            remaining -= chunk.data().length;
-            if (chunk.isLast()) {
-                eof = true;
-                currentChunk = null;
-                currentOffset = 0;
-                return false;
-            }
-            currentChunk = chunk.data();
-            currentOffset = 0;
-            // In theory a non-last chunk always has data, but be safe
-            if (currentChunk.length > 0) {
-                return true;
             }
         }
         return true;

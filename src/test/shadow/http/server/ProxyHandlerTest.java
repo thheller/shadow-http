@@ -126,4 +126,67 @@ public class ProxyHandlerTest {
         String host = proxied("/my-server", "/api/ping").split("\\|", 2)[1];
         assertEquals("localhost:" + upstreamPort, host);
     }
+
+    @Test
+    void forwardsQueryStringsWithBracketsAndLeadingDoubleSlash() throws Exception {
+        var proxy = new ProxyHandler(URI.create("http://localhost:" + upstreamPort));
+        String brackets = TestConnection.run(proxy, "GET /api?ids[]=1&filter={a} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(brackets.startsWith("HTTP/1.1 200 "), brackets);
+        assertTrue(brackets.endsWith("\r\n\r\n/api?ids[]=1&filter={a}|localhost:" + upstreamPort), brackets);
+
+        String doubleSlash = TestConnection.run(proxy, "GET //foo/bar HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assertTrue(doubleSlash.startsWith("HTTP/1.1 200 "), doubleSlash);
+        assertTrue(doubleSlash.endsWith("\r\n\r\n//foo/bar|localhost:" + upstreamPort), doubleSlash);
+    }
+
+    @Test
+    void streamsSseEventsImmediatelyWithoutBuffering() throws Exception {
+        var releaseSecondEvent = new java.util.concurrent.CountDownLatch(1);
+        Server sseUpstream = new Server();
+        sseUpstream.setHandler(req -> {
+            req.setResponseHeader("content-type", "text/event-stream");
+            try (var out = req.responseBody()) {
+                out.write("data: first\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                out.flush();
+                try {
+                    releaseSecondEvent.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                out.write("data: second\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                out.flush();
+            }
+        });
+        sseUpstream.start(0);
+
+        Server sseProxy = new Server();
+        sseProxy.setHandler(new ProxyHandler(URI.create("http://127.0.0.1:" + sseUpstream.getSocket().getLocalPort())));
+        sseProxy.start(0);
+
+        try (var socket = new java.net.Socket("127.0.0.1", sseProxy.getSocket().getLocalPort())) {
+            socket.setSoTimeout(2000);
+            socket.getOutputStream().write("GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+
+            var in = new HttpInput(socket.getInputStream(), 8192);
+            assertEquals("HTTP/1.1", in.readResponseVersion());
+            assertEquals(200, in.readStatusCode());
+            in.readReasonPhrase();
+            while (in.readHeader() != null) {}
+
+            // Must receive the first SSE event BEFORE upstream is allowed to finish
+            var chunked = new ChunkedInputStream(in);
+            byte[] buf = new byte[64];
+            int n = chunked.read(buf);
+            assertEquals("data: first\n\n", new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8));
+
+            releaseSecondEvent.countDown();
+            String rest = new String(chunked.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals("data: second\n\n", rest);
+        } finally {
+            releaseSecondEvent.countDown();
+            sseProxy.stop();
+            sseUpstream.stop();
+        }
+    }
 }

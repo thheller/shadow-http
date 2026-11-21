@@ -74,65 +74,98 @@ public class ClasspathHandler implements HttpHandler {
         boolean useIndexFiles = request.getConfig().useIndexFiles;
 
         String filename = uri.substring(uri.lastIndexOf('/') + 1);
-        URLConnection conn = url.openConnection();
 
-        if (conn instanceof JarURLConnection jarc) {
-            conn.setUseCaches(true);
-
-            String entryName = jarc.getEntryName();
-
-            if (entryName == null) {
-                // root of jar, not servable
-                return;
-            }
-
-            // must not use try-with-resources here since that closes the jar file
-            // which then later causes conn.getInputStream() to fail with zip file is closed
-            JarFile jar = jarc.getJarFile();
-            JarEntry direct = jar.getJarEntry(entryName);
-            if (direct != null && direct.isDirectory()) {
-                if (!useIndexFiles) {
-                    // not serving directory
-                    return;
-                }
-
-                URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
-                if (index == null) {
-                    // no index, still not serving directory
-                    return;
-                }
-
-                filename = "index.html";
-                url = index;
-                conn = index.openConnection();
-            }
-
-        } else if ("file".equals(url.getProtocol())) {
-            conn.setUseCaches(false);
-
+        // Serve file: classpath entries directly via Path to avoid FileURLConnection
+        // opening an unclosed FileInputStream on 304 / HEAD requests.
+        if ("file".equals(url.getProtocol())) {
             try {
                 Path path = Paths.get(url.toURI());
                 if (Files.isDirectory(path)) {
                     if (!useIndexFiles) {
-                        // not serving directory
                         return;
                     }
 
                     URL index = findResource(uri + (uri.endsWith("/") ? "index.html" : "/index.html"));
                     if (index == null) {
-                        // no index, still not serving directory
                         return;
                     }
 
                     filename = "index.html";
-                    url = index;
-                    conn = index.openConnection();
+                    if ("file".equals(index.getProtocol())) {
+                        path = Paths.get(index.toURI());
+                    } else {
+                        serveJarUrl(request, index, filename, false);
+                        return;
+                    }
                 }
-            } catch (URISyntaxException e) {
+
+                if (Files.isRegularFile(path) && Files.isReadable(path)) {
+                    request.serveFile(path, filename);
+                }
+            } catch (URISyntaxException ignored) {
             }
-        } else {
-            // only serving file and jar urls. not sure what else may be here
             return;
+        }
+
+        if ("jar".equals(url.getProtocol())) {
+            serveJarUrl(request, url, filename, useIndexFiles);
+        }
+    }
+
+    private void serveJarUrl(HttpRequest request, URL url, String filename, boolean useIndexFiles) throws IOException {
+        URLConnection conn = url.openConnection();
+        if (!(conn instanceof JarURLConnection jarc)) {
+            return;
+        }
+
+        conn.setUseCaches(true);
+
+        String entryName = jarc.getEntryName();
+        if (entryName == null) {
+            // root of jar, not servable
+            return;
+        }
+
+        // must not use try-with-resources here since that closes the jar file
+        // which then later causes conn.getInputStream() to fail with zip file is closed
+        JarFile jar = jarc.getJarFile();
+        JarEntry direct = jar.getJarEntry(entryName);
+        if (direct != null && direct.isDirectory()) {
+            if (!useIndexFiles) {
+                return;
+            }
+
+            String indexEntry = entryName.endsWith("/") ? entryName + "index.html" : entryName + "/index.html";
+            URL index = findResource("/" + indexEntry);
+            if (index == null) {
+                return;
+            }
+
+            filename = "index.html";
+            if ("file".equals(index.getProtocol())) {
+                try {
+                    Path path = Paths.get(index.toURI());
+                    if (Files.isRegularFile(path) && Files.isReadable(path)) {
+                        request.serveFile(path, filename);
+                    }
+                } catch (URISyntaxException ignored) {
+                }
+                return;
+            }
+
+            conn = index.openConnection();
+            if (!(conn instanceof JarURLConnection indexJarc)) {
+                return;
+            }
+            conn.setUseCaches(true);
+            String resolvedEntry = indexJarc.getEntryName();
+            if (resolvedEntry == null) {
+                return;
+            }
+            JarEntry idxDirect = indexJarc.getJarFile().getJarEntry(resolvedEntry);
+            if (idxDirect != null && idxDirect.isDirectory()) {
+                return;
+            }
         }
 
         long lastModifiedMillis = conn.getLastModified();
