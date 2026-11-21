@@ -36,7 +36,7 @@ public class WebSocketExchange implements WebSocketConnection, Exchange {
         this.maxMessageSize = connection.getServer().getConfig().getMaximumWebSocketMessageSize();
         this.in = in;
         this.handler = handler;
-        this.out = new BufferedOutputStream(connection.getOutputStream(), 8192);
+        this.out = new UnsyncBufferedOutputStream(connection.getOutputStream(), 8192);
         this.wsIn = new WebSocketInput(this.in, perMessageDeflate);
         this.perMessageDeflate = perMessageDeflate;
     }

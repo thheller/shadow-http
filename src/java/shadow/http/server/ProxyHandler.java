@@ -105,7 +105,7 @@ public class ProxyHandler implements HttpHandler {
         try {
             String upstreamTarget = buildUpstreamTarget(request.requestTarget);
             upstream = openSocket();
-            OutputStream out = new BufferedOutputStream(upstream.getOutputStream());
+            OutputStream out = new UnsyncBufferedOutputStream(upstream.getOutputStream(), 8192);
             HttpInput in = new HttpInput(upstream.getInputStream(), 8192);
             writeRequestHeaders(request, upstreamTarget, out, options, upgrade);
 

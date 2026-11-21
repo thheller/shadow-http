@@ -19,7 +19,7 @@ public class Config {
     // when having a lof of open connections. which we won't really have
     // in a shadow-cljs setting. this seems like a good balance
     int inputBufferSize = 8192;
-    int outputBufferSize = 65536; //  32768;
+    int outputBufferSize = 32768;
 
     long maximumRequestBodySize = 10_000_000;
     private int maximumWebSocketMessageSize = 16 * 1024 * 1024;

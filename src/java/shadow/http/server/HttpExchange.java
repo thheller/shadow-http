@@ -27,7 +27,7 @@ public class HttpExchange implements Exchange {
         this.since = System.currentTimeMillis();
         this.connection = connection;
         this.in = new HttpInput(connection.getInputStream(), connection.getServer().getConfig().getInputBufferSize());
-        this.out = new BufferedOutputStream(connection.getOutputStream(), connection.getServer().getConfig().getOutputBufferSize());
+        this.out = new UnsyncBufferedOutputStream(connection.getOutputStream(), connection.getServer().getConfig().getOutputBufferSize());
     }
 
     @Override
